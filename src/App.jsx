@@ -21,7 +21,7 @@ function Router() {
     onboardingData, toggleAvailableDay, toggleAvailableTime, setOnboardingData,
     saveAvailability, activeUser, selectedProfile, dailyRates, updateDailyRate,
     guestCountByDay, updateGuestCount, changeAccountField, techSettings, setTechSettings,
-    saveSettings, selectedSector,
+    saveSettings, selectedSector, hotel, triggerToast, freelancersList,
   } = useApp();
 
   if (bootstrapping) {
@@ -69,6 +69,9 @@ function Router() {
           userName={activeUser.name}
           userRole={activeUser.role}
           defaultSector={selectedSector}
+          hotel={hotel}
+          freelancersCount={freelancersList?.length || 14}
+          triggerToast={triggerToast}
           tech={{
             ...techSettings,
             whatsappNotifications: onboardingData.whatsappNotifications,

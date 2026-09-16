@@ -1,4 +1,4 @@
-import React from 'react';
+﻿import React from 'react';
 import {
   Check, ArrowLeft, ArrowRight, Info, User, Users, ChefHat, Building2, Phone, CheckCircle2, MessageSquare
 } from 'lucide-react';
@@ -24,7 +24,7 @@ export default function OnboardingView() {
     handleAcceptInvite, handleDeclineInvite, saveAvailability, saveSettings,
     toggleAvailableDay, toggleAvailableTime, changeAccountField,
     updateGuestCount, updateDailyRate, techSettings, setTechSettings,
-    onboardingStep, setOnboardingStep, handleFinishOnboarding,
+    onboardingStep, setOnboardingStep, handleFinishOnboarding, busy,
   } = useApp();
 
     return (
@@ -255,67 +255,6 @@ export default function OnboardingView() {
                   </div>
                 </div>
 
-                {/* Card 3: Sou Gerencia (Ajustado conforme pedido do usuário!) */}
-                <div 
-                  className={`onboarding-profile-card ${selectedProfile === 'gerencia' ? 'selected' : ''}`}
-                  onClick={() => setSelectedProfile('gerencia')}
-                >
-                  {selectedProfile === 'gerencia' && (
-                    <div style={{
-                      position: 'absolute',
-                      top: '14px',
-                      right: '14px',
-                      width: '22px',
-                      height: '22px',
-                      borderRadius: '50%',
-                      background: '#0066FF',
-                      color: 'white',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center'
-                    }}>
-                      <Check size={13} strokeWidth={3} />
-                    </div>
-                  )}
-
-                  <div style={{
-                    width: '48px',
-                    height: '48px',
-                    borderRadius: '2px',
-                    backgroundColor: '#F0FDF4',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    marginBottom: '16px',
-                    color: '#16A34A'
-                  }}>
-                    <ChefHat size={24} />
-                  </div>
-
-                  <h3 style={{ fontSize: '18px', fontWeight: 600, color: '#0F172A', marginBottom: '8px' }}>
-                    Sou Gerencia
-                  </h3>
-                  <p style={{ fontSize: '13px', color: '#64748B', lineHeight: 1.5, marginBottom: '20px', minHeight: '40px' }}>
-                    Quero montar a escala e selecionar freelancers para o meu setor.
-                  </p>
-
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: 'auto' }}>
-                    {[
-                      'Monte a escala do seu setor',
-                      'Selecione freelancers',
-                      'Acompanhe confirmações',
-                      'Gerencie substituições'
-                    ].map((item, i) => (
-                      <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '12.5px', color: '#334155' }}>
-                        <div style={{ width: '18px', height: '18px', borderRadius: '50%', background: '#F0FDF4', color: '#16A34A', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                          <Check size={11} strokeWidth={3} />
-                        </div>
-                        <span>{item}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
               </div>
 
               {/* Info Note Box */}
@@ -412,7 +351,7 @@ export default function OnboardingView() {
                     <>
                       <div>
                         <label style={{ display: 'block', fontSize: '12px', fontWeight: 500, color: '#334155', marginBottom: '6px' }}>
-                          Hotel / Estabelecimento
+                          Estabelecimento / Empresa
                         </label>
                         <div className="auth-input-container">
                           <Building2 size={16} className="auth-input-icon" />
@@ -819,10 +758,11 @@ export default function OnboardingView() {
                   <button 
                     type="button"
                     className="btn-primary" 
-                    style={{ padding: '12px 36px', fontSize: '14px', borderRadius: '2px' }}
+                    style={{ padding: '12px 36px', fontSize: '14px', borderRadius: '2px', opacity: busy ? 0.7 : 1 }}
                     onClick={handleFinishOnboarding}
+                    disabled={busy}
                   >
-                    <span>Acessar Plataforma</span>
+                    <span>{busy ? 'Salvando…' : 'Acessar Plataforma'}</span>
                     <ArrowRight size={16} />
                   </button>
                 </div>

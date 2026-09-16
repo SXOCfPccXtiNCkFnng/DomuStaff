@@ -54,71 +54,219 @@ function mapInviteRow(row, hotelName, professionals) {
   };
 }
 
-export async function signIn(email, password) {
+export async function signIn(email, password, rememberMe = false) {
+  const cleanEmail = (email || '').trim().toLowerCase();
+  
   if (!isSupabaseConfigured) {
     const db = readDb();
-    const user = db.users.find((u) => u.email.toLowerCase() === email.toLowerCase() && u.password === password);
-    if (!user) throw new Error('E-mail ou senha inválidos.');
+    const user = db.users.find((u) => u.email.toLowerCase() === cleanEmail && u.password === password);
+    if (!user) throw new Error('E-mail ou senha incorretos. Verifique seus dados e tente novamente.');
     db.sessionId = user.id;
     writeDb(db);
     const profile = db.profiles.find((p) => p.id === user.id);
-    return { user: { id: user.id, email }, account: profileToAccount(profile) };
+    return { user: { id: user.id, email: cleanEmail }, account: profileToAccount(profile) };
   }
-  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-  if (error) throw new Error(error.message);
-  const { data: profile, error: pErr } = await supabase.from('profiles').select('*').eq('id', data.user.id).maybeSingle();
-  if (pErr) throw new Error(pErr.message);
+
+  const { data, error } = await supabase.auth.signInWithPassword({ 
+    email: cleanEmail, 
+    password 
+  });
+
+  if (error) {
+    const msg = error.message || '';
+    if (msg.includes('Invalid login') || msg.includes('invalid_grant')) {
+      throw new Error('E-mail ou senha incorretos. Verifique seus dados e tente novamente.');
+    }
+    if (msg.includes('Email not confirmed')) {
+      throw new Error('Por favor, confirme seu e-mail antes de acessar.');
+    }
+    if (msg.includes('rate limit') || msg.includes('Too many requests')) {
+      throw new Error('Muitas tentativas em sequência. Aguarde alguns instantes e tente novamente.');
+    }
+    throw new Error('E-mail ou senha incorretos. Verifique seus dados e tente novamente.');
+  }
+
+  if (!data?.user) {
+    throw new Error('Não foi possível autenticar o usuário. Tente novamente.');
+  }
+
+  let { data: profile, error: pErr } = await supabase
+    .from('profiles')
+    .select('*')
+    .eq('id', data.user.id)
+    .maybeSingle();
+
+  if (pErr) {
+    console.warn('Aviso ao carregar perfil:', pErr.message);
+  }
+  
+  // If profile doesn't exist yet in the table, auto-create one from auth metadata
+  if (!profile) {
+    const meta = data.user.user_metadata || {};
+    const newProfile = {
+      id: data.user.id,
+      hotel_id: HOTEL_ID,
+      role: meta.role || 'freelancer',
+      name: meta.name || data.user.email?.split('@')[0] || 'Usuário',
+      phone: meta.phone || '',
+      hotel_name: meta.hotel_name || '',
+      city: 'Rio de Janeiro',
+      onboarded: false,
+      settings: {}
+    };
+    await supabase.from('profiles').upsert(newProfile);
+    profile = newProfile;
+  }
+  
+  try {
+    if (rememberMe) {
+      localStorage.setItem('domu_remember_me', '1');
+      sessionStorage.setItem('domu_session_active', '1');
+    } else {
+      localStorage.setItem('domu_remember_me', '0');
+      sessionStorage.setItem('domu_session_active', '1');
+    }
+  } catch (e) {
+    console.warn('Storage warning:', e);
+  }
   return { user: data.user, account: profileToAccount(profile) };
 }
 
-export async function signUp({ name, email, password, phone, hotelName }) {
+export async function signUp({ name, email, password, phone, hotelName, role = 'freelancer' }) {
+  const cleanEmail = email.trim();
+  const cleanName = name.trim();
+  const cleanHotel = hotelName?.trim() || (role === 'rh' ? 'Meu Estabelecimento' : '');
+  const cleanPhone = phone?.trim() || '';
+  const assignedRole = role || 'freelancer';
+
   if (!isSupabaseConfigured) {
     const db = readDb();
-    if (db.users.some((u) => u.email.toLowerCase() === email.toLowerCase())) {
-      throw new Error('Este e-mail já está cadastrado.');
+    if (db.users.some((u) => u.email.toLowerCase() === cleanEmail.toLowerCase())) {
+      throw new Error('Este e-mail ja esta cadastrado.');
     }
     const id = crypto.randomUUID();
-    db.users.push({ id, email, password });
+    db.users.push({ id, email: cleanEmail, password });
     db.profiles.push({
       id,
       hotel_id: HOTEL_ID,
-      role: 'gerencia',
-      name,
-      phone,
+      role: assignedRole,
+      name: cleanName,
+      phone: cleanPhone,
       photo_url: '',
-      department: '',
-      primary_role: '',
+      department: assignedRole === 'rh' ? 'RH / Controladoria' : assignedRole === 'gerencia' ? 'Gerencia Operacional' : '',
+      primary_role: assignedRole === 'freelancer' ? 'Garcom' : '',
       city: 'Rio de Janeiro',
-      hotel_name: hotelName,
+      hotel_name: cleanHotel,
       professional_code: null,
-      available_days: [],
-      available_times: [],
-      settings: {},
+      available_days: assignedRole === 'freelancer' ? ['Sex', 'Sab', 'Dom'] : [],
+      available_times: assignedRole === 'freelancer' ? ['Tarde / Noite'] : [],
+      settings: { whatsappNotifications: true, emergencyAlerts: true },
       onboarded: false,
     });
     db.sessionId = id;
     writeDb(db);
-    return { user: { id, email }, account: profileToAccount(db.profiles.at(-1)) };
+    return { user: { id, email: cleanEmail }, account: profileToAccount(db.profiles.at(-1)) };
   }
-  const { data, error } = await supabase.auth.signUp({ email, password });
-  if (error) throw new Error(error.message);
-  if (!data.user) throw new Error('Não foi possível criar a conta.');
+
+  // 1. Supabase Auth signup
+  const { data, error } = await supabase.auth.signUp({ 
+    email: cleanEmail, 
+    password,
+    options: {
+      data: {
+        name: cleanName,
+        phone: cleanPhone,
+        hotel_name: cleanHotel,
+        role: assignedRole
+      }
+    }
+  });
+
+  if (error) {
+    const msg = error.message || '';
+    if (msg.includes('already registered') || msg.includes('unique') || msg.includes('exists') || msg.includes('User already registered')) {
+      throw new Error('Este e-mail já está cadastrado no sistema. Faça login ou utilize outro.');
+    }
+    if (msg.includes('rate limit') || msg.includes('email rate limit') || msg.toLowerCase().includes('rate limit exceeded')) {
+      throw new Error(
+        'O Supabase bloqueou novos cadastros (limite de e-mail). No painel: Authentication → Providers → Email → desative "Confirm email", aguarde alguns minutos e tente de novo.'
+      );
+    }
+    if (msg.includes('Database error saving new user')) {
+      throw new Error('Erro no banco de dados ao salvar o usuário. Execute o script atualizado setup_complete.sql no SQL Editor do Supabase.');
+    }
+    if (msg.includes('Password') || msg.includes('weak')) {
+      throw new Error('A senha deve ter no mínimo 8 caracteres e ser segura.');
+    }
+    if (msg.includes('valid email')) {
+      throw new Error('Por favor, informe um endereço de e-mail válido.');
+    }
+    throw new Error('Não foi possível criar a conta: ' + (msg || 'Verifique os dados e tente novamente.'));
+  }
+
+  if (!data.user) throw new Error('Nao foi possivel criar a conta.');
+
+  // 2. Tenta login imediato (precisa de sessão se o RLS exigir auth.uid())
+  let hasSession = Boolean(data.session);
+  if (!hasSession) {
+    const { data: loginData, error: loginErr } = await supabase.auth.signInWithPassword({
+      email: cleanEmail,
+      password,
+    });
+    if (loginErr) {
+      throw new Error(
+        'Conta criada no Auth, mas ainda não dá para entrar. Desative "Confirm email" em Authentication → Providers → Email e faça login.'
+      );
+    }
+    hasSession = Boolean(loginData?.session);
+  }
+
+  // 3. Garante linha em profiles (trigger pode falhar; upsert cobre)
   const row = {
     id: data.user.id,
     hotel_id: HOTEL_ID,
-    role: 'gerencia',
-    name,
-    phone,
-    hotel_name: hotelName,
+    role: assignedRole,
+    name: cleanName,
+    phone: cleanPhone,
+    hotel_name: cleanHotel,
+    department: assignedRole === 'rh' ? 'RH / Controladoria' : assignedRole === 'gerencia' ? 'Gerência Operacional' : '',
+    primary_role: assignedRole === 'freelancer' ? 'Garçom' : '',
+    city: 'Rio de Janeiro',
     onboarded: false,
-    settings: {},
+    settings: {
+      whatsappNotifications: true,
+      emergencyAlerts: true,
+    },
   };
-  const { error: pErr } = await supabase.from('profiles').insert(row);
-  if (pErr) throw new Error(pErr.message);
-  return { user: data.user, account: profileToAccount({ ...row, available_days: [], available_times: [] }) };
+
+  const { error: pErr } = await supabase.from('profiles').upsert(row);
+  if (pErr) {
+    const { data: existing } = await supabase.from('profiles').select('*').eq('id', data.user.id).maybeSingle();
+    if (!existing) {
+      throw new Error(
+        'Conta no Auth sem perfil. No SQL Editor rode supabase/fix_profiles_sync.sql e depois faça login.'
+      );
+    }
+  }
+
+  try {
+    localStorage.setItem('domu_remember_me', '1');
+    sessionStorage.setItem('domu_session_active', '1');
+  } catch (_) {}
+
+  return {
+    user: data.user,
+    hasSession,
+    account: profileToAccount({ ...row, available_days: [], available_times: [] }),
+  };
 }
 
 export async function signOut() {
+  try {
+    localStorage.removeItem('domu_remember_me');
+    sessionStorage.removeItem('domu_session_active');
+  } catch (e) {}
+
   if (!isSupabaseConfigured) {
     const db = readDb();
     db.sessionId = null;
@@ -129,6 +277,22 @@ export async function signOut() {
 }
 
 export async function getSession() {
+  // Check if session was marked as temporary (rememberMe === false) and browser was closed
+  try {
+    const rememberMe = localStorage.getItem('domu_remember_me');
+    const sessionActive = sessionStorage.getItem('domu_session_active');
+    if (rememberMe === '0' && !sessionActive) {
+      // Browser was closed and user chose not to stay connected
+      if (isSupabaseConfigured) {
+        await supabase.auth.signOut();
+      }
+      localStorage.removeItem('domu_remember_me');
+      return null;
+    }
+  } catch (e) {
+    console.warn('Session check warning:', e);
+  }
+
   if (!isSupabaseConfigured) {
     const db = readDb();
     if (!db.sessionId) return null;
@@ -145,38 +309,71 @@ export async function getSession() {
 }
 
 export async function saveOnboarding(accountId, payload) {
+  if (!accountId) throw new Error('Sessão inválida. Faça login novamente.');
+
   if (!isSupabaseConfigured) {
     const db = readDb();
-    db.profiles = db.profiles.map((p) => (p.id === accountId ? {
-      ...p,
+    const idx = db.profiles.findIndex((p) => p.id === accountId);
+    const base = idx >= 0 ? db.profiles[idx] : {
+      id: accountId,
+      hotel_id: HOTEL_ID,
+      photo_url: '',
+      city: 'Rio de Janeiro',
+      professional_code: null,
+    };
+    const next = {
+      ...base,
       role: payload.role,
       name: payload.name,
       phone: payload.phone,
       department: payload.department || '',
       primary_role: payload.primaryRole || '',
-      hotel_name: payload.hotelOrRole || p.hotel_name,
+      hotel_name: payload.hotelOrRole || base.hotel_name || '',
+      city: payload.city || base.city || 'Rio de Janeiro',
       available_days: payload.availableDays || [],
       available_times: payload.availableTimes || [],
-      settings: { ...p.settings, whatsappNotifications: payload.whatsappNotifications, emergencyAlerts: payload.emergencyAlerts },
+      settings: {
+        ...(base.settings || {}),
+        whatsappNotifications: payload.whatsappNotifications !== false,
+        emergencyAlerts: payload.emergencyAlerts !== false,
+        ...(payload.settings || {}),
+      },
       onboarded: true,
-    } : p));
+    };
+    if (idx >= 0) db.profiles[idx] = next;
+    else db.profiles.push(next);
     writeDb(db);
-    return profileToAccount(db.profiles.find((p) => p.id === accountId));
+    return profileToAccount(next);
   }
-  const { data, error } = await supabase.from('profiles').update({
+
+  const row = {
+    id: accountId,
+    hotel_id: HOTEL_ID,
     role: payload.role,
     name: payload.name,
-    phone: payload.phone,
+    phone: payload.phone || '',
     department: payload.department || null,
     primary_role: payload.primaryRole || null,
-    hotel_name: payload.hotelOrRole,
+    hotel_name: payload.hotelOrRole || '',
+    city: payload.city || 'Rio de Janeiro',
     available_days: payload.availableDays || [],
     available_times: payload.availableTimes || [],
-    settings: payload.settings || {},
+    settings: {
+      whatsappNotifications: payload.whatsappNotifications !== false,
+      emergencyAlerts: payload.emergencyAlerts !== false,
+      ...(payload.settings || {}),
+    },
     onboarded: true,
     updated_at: new Date().toISOString(),
-  }).eq('id', accountId).select().single();
-  if (error) throw new Error(error.message);
+  };
+
+  const { data, error } = await supabase
+    .from('profiles')
+    .upsert(row, { onConflict: 'id' })
+    .select('*')
+    .single();
+
+  if (error) throw new Error(error.message || 'Não foi possível salvar o onboarding.');
   return profileToAccount(data);
 }
 

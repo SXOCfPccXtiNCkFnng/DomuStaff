@@ -17,20 +17,22 @@ export function AppProvider({ children }) {
   const [bootstrapping, setBootstrapping] = useState(true);
   const [currentView, setCurrentView] = useState('login');
   const [showPassword, setShowPassword] = useState(false);
-  const [loginEmail, setLoginEmail] = useState('marcos.ferreira@atlantico.com.br');
-  const [loginPassword, setLoginPassword] = useState('domu123');
-  const [rememberMe, setRememberMe] = useState(true);
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [rememberMe, setRememberMe] = useState(false);
+  const [registerType, setRegisterType] = useState('freelancer');
   const [registerName, setRegisterName] = useState('');
   const [registerHotel, setRegisterHotel] = useState('');
   const [registerEmail, setRegisterEmail] = useState('');
   const [registerPhone, setRegisterPhone] = useState('');
   const [registerPassword, setRegisterPassword] = useState('');
+  const [registerConfirmPassword, setRegisterConfirmPassword] = useState('');
   const [authError, setAuthError] = useState('');
   const [busy, setBusy] = useState(false);
 
   const [account, setAccount] = useState(null);
   const [onboardingStep, setOnboardingStep] = useState(1);
-  const [selectedProfile, setSelectedProfile] = useState('gerencia');
+  const [selectedProfile, setSelectedProfile] = useState('freelancer');
   const [onboardingData, setOnboardingData] = useState({
     name: '',
     hotelOrRole: 'Hotel Atlântico Copacabana',
@@ -157,15 +159,35 @@ export function AppProvider({ children }) {
     return () => { alive = false; };
   }, []);
 
-  const signInWith = async (email, password) => {
+    const signInWith = async (email, password) => {
     setAuthError('');
+    const cleanEmail = (email || '').trim();
+    if (!cleanEmail) {
+      setAuthError('Por favor, digite seu e-mail.');
+      return;
+    }
+    if (!password) {
+      setAuthError('Por favor, digite sua senha de acesso.');
+      return;
+    }
     setBusy(true);
     try {
-      const { account: acc } = await api.signIn(email, password);
-      if (!acc) throw new Error('Perfil não encontrado. Rode o seed no Supabase.');
+      const { account: acc } = await api.signIn(cleanEmail, password);
+      if (!acc) {
+        throw new Error('Conta não encontrada no sistema. Verifique seus dados ou crie uma nova conta.');
+      }
       await hydrateAccount(acc);
     } catch (err) {
-      setAuthError(err.message || 'Falha no login');
+      const raw = err.message || '';
+      if (raw.includes('Invalid login') || raw.includes('invalid_credentials') || raw.includes('incorretos')) {
+        setAuthError('E-mail ou senha incorretos. Verifique os dados digitados e tente novamente.');
+      } else if (raw.includes('not confirmed') || raw.includes('confirm')) {
+        setAuthError('Por favor, confirme seu e-mail para acessar a plataforma.');
+      } else if (raw.includes('rate limit') || raw.includes('Too many')) {
+        setAuthError('Muitas tentativas em sequência. Aguarde alguns instantes e tente novamente.');
+      } else {
+        setAuthError(raw || 'E-mail ou senha incorretos. Verifique seus dados e tente novamente.');
+      }
     } finally {
       setBusy(false);
     }
@@ -176,20 +198,83 @@ export function AppProvider({ children }) {
     await signInWith(loginEmail, loginPassword);
   };
 
-  const handleRegisterSubmit = async (e) => {
+      const handleRegisterSubmit = async (e) => {
     e.preventDefault();
     setAuthError('');
+
+    // 1. Strict Name Validation (Full Name: Name + Surname)
+    const trimmedName = (registerName || '').trim();
+    const nameParts = trimmedName.split(/\s+/).filter(Boolean);
+    if (nameParts.length < 2 || nameParts.some(p => p.length < 2)) {
+      setAuthError('Por favor, informe seu nome completo (nome e sobrenome).');
+      return;
+    }
+    if (/[0-9!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(trimmedName)) {
+      setAuthError('O nome não deve conter números ou símbolos especiais.');
+      return;
+    }
+
+    // 2. Strict Email Validation (RFC 5322 regex)
+    const trimmedEmail = (registerEmail || '').trim().toLowerCase();
+    const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+    if (!emailRegex.test(trimmedEmail)) {
+      setAuthError('Por favor, informe um endereço de e-mail válido (ex: seu.nome@email.com).');
+      return;
+    }
+
+    // 3. Strict Phone / WhatsApp Validation (Brazilian DDD + 10 or 11 digits)
+    const rawPhone = (registerPhone || '').replace(/\D/g, '');
+    if (rawPhone.length < 10 || rawPhone.length > 11) {
+      setAuthError('Por favor, informe um número de WhatsApp válido com DDD (ex: (21) 99999-9999).');
+      return;
+    }
+    const ddd = parseInt(rawPhone.slice(0, 2), 10);
+    if (ddd < 11 || ddd > 99) {
+      setAuthError('DDD inválido. Informe um DDD brasileiro válido entre 11 e 99.');
+      return;
+    }
+
+    // 4. Strict Password Validation (8+ chars, upper, lower, number)
+    if (registerPassword.length < 8) {
+      setAuthError('A senha deve ter no mínimo 8 caracteres.');
+      return;
+    }
+    if (!/[A-Z]/.test(registerPassword)) {
+      setAuthError('A senha deve conter pelo menos uma letra maiúscula (A-Z).');
+      return;
+    }
+    if (!/[a-z]/.test(registerPassword)) {
+      setAuthError('A senha deve conter pelo menos uma letra minúscula (a-z).');
+      return;
+    }
+    if (!/[0-9]/.test(registerPassword)) {
+      setAuthError('A senha deve conter pelo menos um número (0-9).');
+      return;
+    }
+    if (registerPassword !== registerConfirmPassword) {
+      setAuthError('As senhas não coincidem. Digite a mesma senha nos dois campos.');
+      return;
+    }
+
     setBusy(true);
     try {
-      const { account: acc } = await api.signUp({
-        name: registerName,
-        email: registerEmail,
+      const assignedRole = registerType === 'establishment' ? 'rh' : 'freelancer';
+      const { account: acc, hasSession } = await api.signUp({
+        name: trimmedName,
+        email: trimmedEmail,
         password: registerPassword,
         phone: registerPhone,
-        hotelName: registerHotel,
+        hotelName: registerType === 'establishment' ? registerHotel : '',
+        role: assignedRole,
       });
-      await hydrateAccount(acc);
-      triggerToast('Conta criada! Vamos personalizar sua experiência.');
+
+      if (hasSession || acc) {
+        await hydrateAccount(acc);
+        triggerToast('Conta criada com sucesso! Dados validados e sincronizados.');
+      } else {
+        triggerToast('Cadastro realizado! Por favor, faça login com suas credenciais.');
+        setCurrentView('login');
+      }
     } catch (err) {
       setAuthError(err.message || 'Falha no cadastro');
     } finally {
@@ -198,27 +283,47 @@ export function AppProvider({ children }) {
   };
 
   const handleFinishOnboarding = async () => {
-    if (!account) return;
-    const next = await api.saveOnboarding(account.id, {
-      role: selectedProfile,
-      name: onboardingData.name,
-      phone: onboardingData.phone,
-      department: onboardingData.department,
-      primaryRole: onboardingData.primaryRole,
-      hotelOrRole: onboardingData.hotelOrRole,
-      availableDays: onboardingData.availableDays,
-      availableTimes: onboardingData.availableTimes,
-      whatsappNotifications: onboardingData.whatsappNotifications,
-      emergencyAlerts: onboardingData.emergencyAlerts,
-      settings: {
-        ...account.settings,
+    setBusy(true);
+    try {
+      let accountId = account?.id;
+      if (!accountId && api.isSupabaseConfigured) {
+        const session = await api.getSession();
+        accountId = session?.user?.id || session?.account?.id;
+      }
+      if (!accountId) {
+        triggerToast('Sessão expirada. Faça login de novo para concluir.');
+        setCurrentView('login');
+        return;
+      }
+
+      const next = await api.saveOnboarding(accountId, {
+        role: selectedProfile,
+        name: onboardingData.name,
+        phone: onboardingData.phone,
+        department: onboardingData.department,
+        primaryRole: onboardingData.primaryRole,
+        hotelOrRole: onboardingData.hotelOrRole,
+        city: onboardingData.city,
+        availableDays: onboardingData.availableDays,
+        availableTimes: onboardingData.availableTimes,
         whatsappNotifications: onboardingData.whatsappNotifications,
         emergencyAlerts: onboardingData.emergencyAlerts,
-      },
-    });
-    setAccount(next);
-    triggerToast('Configuração concluída com sucesso! Bem-vindo ao painel.');
-    setCurrentView(PROFILE_HOME[selectedProfile] || 'main_kanban');
+        settings: {
+          ...(account?.settings || {}),
+          whatsappNotifications: onboardingData.whatsappNotifications,
+          emergencyAlerts: onboardingData.emergencyAlerts,
+        },
+      });
+
+      setAccount(next);
+      setSelectedProfile(next.role || selectedProfile);
+      triggerToast('Configuração concluída! Bem-vindo ao painel.');
+      setCurrentView(PROFILE_HOME[next.role || selectedProfile] || 'freelancer_convites');
+    } catch (err) {
+      triggerToast(err.message || 'Não foi possível salvar o onboarding.');
+    } finally {
+      setBusy(false);
+    }
   };
 
   const handleLogout = async () => {
@@ -571,12 +676,14 @@ export function AppProvider({ children }) {
     loginEmail, setLoginEmail,
     loginPassword, setLoginPassword,
     rememberMe, setRememberMe,
+    registerType, setRegisterType,
     registerName, setRegisterName,
     registerHotel, setRegisterHotel,
     registerEmail, setRegisterEmail,
     registerPhone, setRegisterPhone,
     registerPassword, setRegisterPassword,
-    authError, busy,
+    registerConfirmPassword, setRegisterConfirmPassword,
+    authError, setAuthError, busy,
     account, hotel,
     onboardingStep, setOnboardingStep,
     selectedProfile, setSelectedProfile,

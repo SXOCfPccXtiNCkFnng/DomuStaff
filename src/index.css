@@ -224,8 +224,10 @@ button {
 /* ——— Onboarding ——— */
 .onboarding-profile-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 12px;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+  max-width: 720px;
+  margin: 0 auto;
 }
 
 .onboarding-profile-card {
