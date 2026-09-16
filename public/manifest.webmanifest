@@ -1,0 +1,26 @@
+{
+  "name": "Domu Staff",
+  "short_name": "Domu Staff",
+  "description": "Gestão de escalas e freelancers para hotelaria",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#F4F7FC",
+  "theme_color": "#0066FF",
+  "lang": "pt-BR",
+  "icons": [
+    {
+      "src": "/logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/favicon.ico",
+      "sizes": "48x48",
+      "type": "image/x-icon",
+      "purpose": "any"
+    }
+  ]
+}
