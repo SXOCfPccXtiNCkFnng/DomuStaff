@@ -1,229 +1,412 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import {
-  Calendar, Users, CheckCircle2, MessageSquare, Clock, Settings, Search,
-  Bell, ChevronLeft, ChevronRight, Phone, Plus, ArrowLeft,
-  Check, Send, RotateCcw, AlertTriangle, Layers, LogOut,
-  Utensils, Wine, ChefHat, Package, Bed, TrendingUp, X, FileText, Menu
+  Calendar, Users, ChevronLeft, ChevronRight, AlertTriangle,
 } from 'lucide-react';
 import { useApp } from '../../store/AppContext';
 import {
-  GERENCIA_DAYS, GERENCIA_SECTORS, SECTOR_SHIFT, RATE_KIND_LABEL,
-  staffNeeded, formatBRL, dailyRateFor, rateKindForDay,
+  GERENCIA_DAYS, GERENCIA_SECTORS, RATE_KIND_LABEL,
+  formatBRL, dailyRateFor, rateKindForDay, staffNeeded, dayMapTone,
+  staffingOptionsFromTech,
 } from '../../lib/constants';
+
+function inviteCoversDay(inv, day) {
+  if (!inv || !day) return false;
+  const dayIso = day.iso;
+  return (inv.days || []).some((d) => {
+    const iso = typeof d === 'string' ? d.slice(0, 10) : (d?.iso || '').slice(0, 10);
+    return iso && dayIso && iso === dayIso;
+  });
+}
+
+function sectorIdFromLabel(sector) {
+  if (!sector) return 'restaurante';
+  const found = GERENCIA_SECTORS.find(
+    (s) => s.id === sector || s.label.toLowerCase() === String(sector).toLowerCase(),
+  );
+  return found?.id || 'restaurante';
+}
 
 export default function Kanban() {
   const {
-    currentView, setCurrentView, toast, navOpen, setNavOpen, triggerToast,
-    selectedProfile, setSelectedProfile, onboardingData, setOnboardingData, activeUser, hotel,
-    selectedGerenciaDay, setSelectedGerenciaDay, selectedSector, setSelectedSector,
-    gerenciaSearchQuery, setGerenciaSearchQuery,
-    freelancerBaseQuery, setFreelancerBaseQuery, freelancerBaseSector, setFreelancerBaseSector,
-    selectedFreelancersByDay, setSelectedFreelancersByDay,
-    sentDays, returnedByDay, guestCountByDay, dailyRates, rhDay, setRhDay,
-    freelancersList, selectedIds, setSelectedIds, activeTab, setActiveTab,
-    checkedInIds, activeRequest, freelancerInvites, freelancerAgenda,
-    pendingInviteCount, dayPickerFor, setDayPickerFor, dayPickerSelected,
-    returnModalOpen, setReturnModalOpen, returnReason, setReturnReason,
-    toggleGerenciaFreelancer, handleCancelGerenciaSelection, handleSendToRH,
-    openDayPicker, toggleDayPickerDay, confirmDayPicker,
-    handleApproveAndSend, handleReturnToMaitre, confirmReturnToMaitre,
-    toggleSelectOne, confirmPresence, undoPresence, goHome, handleLogout,
-    handleAcceptInvite, handleDeclineInvite, saveAvailability, saveSettings,
-    toggleAvailableDay, toggleAvailableTime, changeAccountField,
-    updateGuestCount, updateDailyRate, techSettings, setTechSettings,
-    onboardingStep, setOnboardingStep, handleFinishOnboarding,
+    setCurrentView, GERENCIA_DAYS: weekDays, weekLabel, shiftWeek,
+    guestCountByDay, dailyRates, rhDay, setRhDay,
+    selectedFreelancersByDay, freelancersList, sentDays, returnedByDay,
+    techSettings, getShiftForDay, setActiveRequest, requestStatusByDay,
+    invitedByDay, freelancerInvites,
   } = useApp();
 
-const rhDayObj = GERENCIA_DAYS.find(d => d.id === rhDay) || GERENCIA_DAYS[4];
-            const rhKind = rateKindForDay(rhDay);
-            const rhGuests = guestCountByDay[rhDay] ?? rhDayObj.guests;
-            const kanbanColumns = [
-              {
-                id: 'solicitadas',
-                title: 'Solicitadas',
-                hint: 'Pelo maître',
-                count: 2,
-                cards: [
-                  { sector: 'Restaurante', icon: Utensils, people: 14, role: 'Garçom', extra: 11 },
-                  { sector: 'Bar', icon: Wine, people: 6, role: 'Bartender', extra: 3 },
-                ],
-              },
-              {
-                id: 'analise',
-                title: 'Em análise',
-                hint: 'Revisão do RH',
-                count: 2,
-                cards: [
-                  { sector: 'Cozinha', icon: ChefHat, people: 8, role: 'Cozinheiro', extra: 5 },
-                  { sector: 'Governança', icon: Bed, people: 10, role: 'Camareira', extra: 7 },
-                ],
-              },
-              {
-                id: 'enviadas',
-                title: 'Enviadas',
-                hint: 'Aguardando resposta',
-                count: 2,
-                cards: [
-                  { sector: 'Restaurante', icon: Utensils, people: 14, role: 'Garçom', extra: 8, progress: '8/14 respostas' },
-                  { sector: 'CDC', icon: Package, people: 6, role: 'Cumin', extra: 2, progress: '2/6 respostas' },
-                ],
-              },
-              {
-                id: 'confirmadas',
-                title: 'Confirmadas',
-                hint: 'Prontas para a escala',
-                count: 1,
-                cards: [
-                  { sector: 'Bar', icon: Wine, people: 6, role: 'Bartender', extra: 6, progress: '6/6 confirmados', done: true },
-                ],
-              },
-              {
-                id: 'pendencias',
-                title: 'Pendências',
-                hint: 'Aguardando ação',
-                count: 1,
-                cards: [
-                  { sector: 'Governança', icon: Bed, people: 10, role: 'Camareira', extra: 3, progress: '3 sem resposta', alert: true },
-                ],
-              },
-            ];
-            const weekCost = 14840;
-            const weekendCost = 6240;
-            const holidayCost = 0;
+  const days = weekDays?.length ? weekDays : GERENCIA_DAYS;
+  const rhDayObj = days.find((d) => d.id === rhDay) || days[0];
+  const rhKind = rateKindForDay(rhDayObj || rhDay);
+  const rhGuests = Number(guestCountByDay[rhDay]) || 0;
+  const weekGuestCounts = days.map((d) => Number(guestCountByDay[d.id]) || 0);
+  const staffingOpts = staffingOptionsFromTech(techSettings, weekGuestCounts);
+  const suggestedStaff = staffNeeded(rhGuests, staffingOpts);
+  const baseStaff = staffNeeded(rhGuests, {
+    peoplePerStaff: staffingOpts.peoplePerStaff,
+    minStaff: staffingOpts.minStaff,
+  });
+  const showOccupancyAlert = !!techSettings.suggestOnHighOccupancy && suggestedStaff > baseStaff;
 
-            return (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap' }}>
-                  <div>
-                    <h1 className="page-title">Escalas da semana</h1>
-                    <p className="page-sub">Aprove solicitações e acompanhe o custo com as diárias da casa.</p>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <button type="button" style={{ width: '32px', height: '32px', borderRadius: '4px', border: '1px solid #E2E8F0', background: '#FFF', color: '#64748B', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      <ChevronLeft size={16} />
-                    </button>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px', background: '#FFF', border: '1px solid #E2E8F0', borderRadius: '4px', fontSize: '13px', fontWeight: 500 }}>
-                      <Calendar size={14} color="#64748B" />
-                      15 – 21 de setembro de 2025
-                    </div>
-                    <button type="button" style={{ width: '32px', height: '32px', borderRadius: '4px', border: '1px solid #E2E8F0', background: '#FFF', color: '#64748B', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      <ChevronRight size={16} />
-                    </button>
-                  </div>
-                </div>
+  const dayInvites = useMemo(
+    () => (freelancerInvites || []).filter((inv) => inviteCoversDay(inv, rhDayObj)),
+    [freelancerInvites, rhDayObj],
+  );
 
-                <div className="week-strip" style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '8px' }}>
-                  {GERENCIA_DAYS.map((day) => {
-                    const active = rhDay === day.id;
-                    const kind = rateKindForDay(day.id);
-                    const guests = guestCountByDay[day.id] ?? day.guests;
-                    return (
-                      <div
-                        key={day.id}
-                        onClick={() => setRhDay(day.id)}
-                        style={{
-                          background: active ? '#EBF3FF' : '#FFFFFF',
-                          border: active ? '1px solid #0066FF' : '1px solid #E2E8F0',
-                          borderRadius: '2px',
-                          padding: '12px 8px',
-                          textAlign: 'left',
-                          cursor: 'pointer'
-                        }}
-                      >
-                        <div style={{ fontSize: '13px', fontWeight: 600, color: active ? '#0066FF' : '#0F172A' }}>
-                          {day.label} {day.date}
-                        </div>
-                        <div style={{ fontSize: '11px', color: '#64748B', marginTop: '6px' }}>
-                          {guests} hóspedes
-                        </div>
-                        <div style={{ fontSize: '11px', color: active ? '#0066FF' : '#94A3B8', marginTop: '6px' }}>
-                          {RATE_KIND_LABEL[kind]}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
+  const invitedEntries = invitedByDay?.[rhDay] || [];
 
-                <div className="kanban-row" style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '10px', alignItems: 'start' }}>
-                  {kanbanColumns.map((col) => (
-                    <div key={col.id} style={{ background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '2px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 12px 10px', borderBottom: '1px solid #E2E8F0' }}>
-                        <div>
-                          <div style={{ fontSize: '13px', fontWeight: 600, color: '#0F172A' }}>{col.title}</div>
-                          <div style={{ fontSize: '11px', color: '#64748B' }}>{col.hint}</div>
-                        </div>
-                        <span style={{ fontSize: '12px', color: '#64748B', background: '#F1F5F9', padding: '1px 7px', borderRadius: '4px' }}>{col.count}</span>
-                      </div>
-                      <div style={{ padding: '8px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                        {col.cards.map((card) => {
-                          const cost = card.people * dailyRateFor(card.role, rhKind, dailyRates);
-                          return (
-                            <button
-                              key={`${col.id}-${card.sector}`}
-                              type="button"
-                              onClick={() => setCurrentView('approval_details')}
-                              style={{
-                                background: '#FFFFFF',
-                                border: '1px solid #E2E8F0',
-                                borderRadius: '2px',
-                                padding: '12px',
-                                textAlign: 'left',
-                                cursor: 'pointer'
-                              }}
-                            >
-                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                  <card.icon size={14} color="#64748B" />
-                                  <span style={{ fontSize: '13px', fontWeight: 600, color: '#0F172A' }}>{card.sector}</span>
-                                </div>
-                                {card.alert ? <AlertTriangle size={14} color="#DC2626" /> : <ChevronRight size={14} color="#94A3B8" />}
-                              </div>
-                              <div style={{ fontSize: '12px', color: '#64748B' }}>
-                                {rhDayObj.label}, {rhDayObj.date} · {card.people} pessoas
-                              </div>
-                              <div style={{ fontSize: '13px', fontWeight: 600, color: '#0F172A', marginTop: '8px' }}>
-                                {formatBRL(cost)}
-                              </div>
-                              <div style={{ fontSize: '11px', color: '#94A3B8', marginTop: '2px' }}>
-                                {card.people} × {formatBRL(dailyRateFor(card.role, rhKind, dailyRates))} · {RATE_KIND_LABEL[rhKind]}
-                              </div>
-                              {card.progress && (
-                                <div style={{ fontSize: '11px', color: card.alert ? '#DC2626' : '#64748B', marginTop: '8px' }}>
-                                  {card.progress}
-                                </div>
-                              )}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  ))}
-                </div>
+  const sectorCards = useMemo(() => {
+    const map = {};
 
-                <div style={{ background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '2px', padding: '14px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap' }}>
-                  <div>
-                    <div style={{ fontSize: '14px', fontWeight: 600, color: '#0F172A' }}>Custo da semana</div>
-                    <div style={{ fontSize: '12px', color: '#64748B', marginTop: '2px' }}>
-                      {rhGuests} hóspedes · nenhum feriado nesta semana
-                    </div>
-                  </div>
-                  <div style={{ display: 'flex', gap: '24px' }}>
-                    {[
-                      { label: 'Semana', value: weekCost },
-                      { label: 'Fim de semana', value: weekendCost },
-                      { label: 'Feriados', value: holidayCost },
-                    ].map((item) => (
-                      <div key={item.label}>
-                        <div style={{ fontSize: '11px', color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{item.label}</div>
-                        <div style={{ fontSize: '15px', fontWeight: 600, color: '#0F172A', marginTop: '2px' }}>{formatBRL(item.value)}</div>
-                      </div>
-                    ))}
-                    <div>
-                      <div style={{ fontSize: '11px', color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Total</div>
-                      <div style={{ fontSize: '15px', fontWeight: 600, color: '#0066FF', marginTop: '2px' }}>{formatBRL(weekCost + weekendCost + holidayCost)}</div>
-                    </div>
-                  </div>
+    const ensure = (secId, opts = {}) => {
+      const sectorMeta = GERENCIA_SECTORS.find((s) => s.id === secId) || { id: secId, label: secId, icon: Users };
+      if (!map[secId]) {
+        map[secId] = {
+          sectorId: secId,
+          sector: sectorMeta.label,
+          icon: sectorMeta.icon || Users,
+          people: 0,
+          accepted: 0,
+          pending: 0,
+          declined: 0,
+          role: opts.role || '—',
+          shift: opts.shift || getShiftForDay?.(rhDay, secId) || '—',
+          codes: new Set(),
+        };
+      }
+      return map[secId];
+    };
+
+    // Escala montada (ainda sem convite ou com gente na lista)
+    (selectedFreelancersByDay[rhDay] || []).forEach((code) => {
+      const f = freelancersList.find((p) => p.id === code);
+      if (!f) return;
+      const card = ensure(f.sector || 'restaurante', { role: f.role });
+      if (!card.codes.has(code)) {
+        card.codes.add(code);
+        card.people += 1;
+        if (card.role === '—') card.role = f.role;
+      }
+    });
+
+    // Convites do dia (fonte de verdade p/ aceite/recusa)
+    dayInvites.forEach((inv) => {
+      const secId = sectorIdFromLabel(inv.sector);
+      const code = inv.professionalId;
+      const f = freelancersList.find((p) => p.id === code);
+      const card = ensure(secId, {
+        role: inv.role || f?.role,
+        shift: inv.time || getShiftForDay?.(rhDay, secId),
+      });
+      if (inv.time) card.shift = inv.time;
+      if (code && !card.codes.has(code)) {
+        card.codes.add(code);
+        card.people += 1;
+      }
+      const st = inv.status || 'pending';
+      if (st === 'accepted' || st === 'confirmed') card.accepted += 1;
+      else if (st === 'declined') card.declined += 1;
+      else card.pending += 1;
+    });
+
+    // Fallback: invitedByDay com status (quando invite list ainda não mapeou)
+    invitedEntries.forEach((e) => {
+      const code = typeof e === 'string' ? e : e.code;
+      const st = typeof e === 'string' ? 'pending' : (e.status || 'pending');
+      const f = freelancersList.find((p) => p.id === code);
+      if (!f && !code) return;
+      const secId = f?.sector || 'restaurante';
+      const card = ensure(secId, {
+        role: f?.role,
+        shift: (typeof e === 'object' && e.time) || getShiftForDay?.(rhDay, secId),
+      });
+      if (code && !card.codes.has(code)) {
+        card.codes.add(code);
+        card.people += 1;
+        if (st === 'accepted' || st === 'confirmed') card.accepted += 1;
+        else if (st === 'declined') card.declined += 1;
+        else card.pending += 1;
+      }
+    });
+
+    return Object.values(map).map(({ codes, ...rest }) => rest).filter((c) => c.people > 0);
+  }, [
+    selectedFreelancersByDay, rhDay, freelancersList, dayInvites,
+    invitedEntries, getShiftForDay,
+  ]);
+
+  const status = requestStatusByDay?.[rhDay];
+  const isReturned = Boolean(returnedByDay[rhDay]);
+  const hasInvites = dayInvites.length > 0 || invitedEntries.length > 0;
+  const isRequested = !isReturned && (status === 'requested' || (!status && sectorCards.length > 0 && !sentDays[rhDay] && !hasInvites));
+  const isSentToFreelas = status === 'sent' || status === 'confirmed' || hasInvites || (!!sentDays[rhDay] && !isReturned && status !== 'requested');
+
+  const solicitadas = isRequested && !isReturned ? sectorCards : [];
+
+  // Enviadas: ainda há pendente de resposta
+  const enviadas = (!isReturned && isSentToFreelas)
+    ? sectorCards
+      .filter((c) => c.pending > 0 || (c.accepted === 0 && c.declined === 0 && status === 'sent'))
+      .map((c) => ({
+        ...c,
+        progress: c.pending
+          ? `${c.pending} aguardando · ${c.accepted} aceito${c.accepted === 1 ? '' : 's'}`
+          : `${c.people} na lista`,
+      }))
+    : [];
+
+  // Confirmadas: pelo menos 1 aceito e ninguém pendente nesse setor
+  const confirmadas = sectorCards
+    .filter((c) => c.accepted > 0 && c.pending === 0)
+    .map((c) => ({
+      ...c,
+      progress: c.declined
+        ? `${c.accepted} confirmado${c.accepted === 1 ? '' : 's'} · ${c.declined} recusou`
+        : `${c.accepted} confirmado${c.accepted === 1 ? '' : 's'}`,
+    }));
+
+  // Pendências: devolvida OU recusas precisando substituto
+  const pendenciasFromDecline = sectorCards
+    .filter((c) => c.declined > 0)
+    .map((c) => ({
+      ...c,
+      progress: `${c.declined} recusou — chame substituto`,
+      alert: true,
+    }));
+  const pendenciasFromReturn = isReturned
+    ? sectorCards.map((c) => ({
+      ...c,
+      progress: returnedByDay[rhDay]?.reason || 'Devolvida',
+      alert: true,
+    }))
+    : [];
+  const pendencias = [...pendenciasFromReturn, ...pendenciasFromDecline.filter(
+    (c) => !pendenciasFromReturn.some((p) => p.sectorId === c.sectorId),
+  )];
+
+  // Evita o mesmo card em Enviadas se já está só em Confirmadas (sem pendentes)
+  const enviadasClean = enviadas.filter(
+    (c) => !confirmadas.some((ok) => ok.sectorId === c.sectorId && c.pending === 0 && c.declined === 0),
+  );
+
+  const kanbanColumns = [
+    { id: 'solicitadas', title: 'Solicitadas', hint: 'Pela gerência', count: solicitadas.length, cards: solicitadas },
+    { id: 'analise', title: 'Em análise', hint: 'Revisão do RH', count: 0, cards: [] },
+    { id: 'enviadas', title: 'Enviadas', hint: 'Aguardando resposta', count: enviadasClean.length, cards: enviadasClean },
+    { id: 'confirmadas', title: 'Confirmadas', hint: 'Aceitas pelo freela', count: confirmadas.length, cards: confirmadas },
+    { id: 'pendencias', title: 'Pendências', hint: 'Recusas / devoluções', count: pendencias.length, cards: pendencias },
+  ];
+
+  let weekCost = 0;
+  let weekendCost = 0;
+  days.forEach((day) => {
+    const kind = rateKindForDay(day);
+    const codes = new Set(selectedFreelancersByDay[day.id] || []);
+    (invitedByDay?.[day.id] || []).forEach((e) => {
+      const code = typeof e === 'string' ? e : e.code;
+      if (code) codes.add(code);
+    });
+    codes.forEach((code) => {
+      const f = freelancersList.find((p) => p.id === code);
+      if (!f) return;
+      const rate = dailyRateFor(f.role, kind, dailyRates);
+      if (kind === 'weekend') weekendCost += rate;
+      else weekCost += rate;
+    });
+  });
+
+  const scaleCountForDay = (dayId) => {
+    const fromScale = selectedFreelancersByDay[dayId] || [];
+    const fromInvites = invitedByDay?.[dayId] || [];
+    const set = new Set([
+      ...fromScale,
+      ...fromInvites.map((e) => (typeof e === 'string' ? e : e.code)).filter(Boolean),
+    ]);
+    return set.size;
+  };
+
+  const dayLabelStatus = (dayId) => {
+    const st = requestStatusByDay?.[dayId];
+    const invs = invitedByDay?.[dayId] || [];
+    const anyAccepted = invs.some((e) => (typeof e === 'object' ? e.status : '') === 'accepted' || e.status === 'confirmed');
+    const anyDeclined = invs.some((e) => (typeof e === 'object' ? e.status : '') === 'declined');
+    const anyPending = invs.some((e) => !e.status || e.status === 'pending');
+    if (returnedByDay?.[dayId]) return 'Devolvida';
+    if (anyDeclined && !anyPending) return 'Recusa';
+    if (anyAccepted && !anyPending) return 'Confirmada';
+    if (anyPending || st === 'sent') return 'Enviada';
+    if (st === 'requested') return 'Aguardando';
+    if (st === 'confirmed') return 'Confirmada';
+    return RATE_KIND_LABEL[rateKindForDay(days.find((d) => d.id === dayId) || dayId)];
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+      <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap' }}>
+        <div>
+          <h1 className="page-title">Escalas da semana</h1>
+          <p className="page-sub">Aprove solicitações e acompanhe o custo. A previsão de pessoas fica em Configurações.</p>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <button type="button" onClick={() => shiftWeek(-1)} aria-label="Semana anterior" style={{ width: '32px', height: '32px', borderRadius: '4px', border: '1px solid #E2E8F0', background: '#FFF', color: '#64748B', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+            <ChevronLeft size={16} />
+          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px', background: '#FFF', border: '1px solid #E2E8F0', borderRadius: '4px', fontSize: '13px', fontWeight: 500 }}>
+            <Calendar size={14} color="#64748B" />
+            {weekLabel || 'Esta semana'}
+          </div>
+          <button type="button" onClick={() => shiftWeek(1)} aria-label="Próxima semana" style={{ width: '32px', height: '32px', borderRadius: '4px', border: '1px solid #E2E8F0', background: '#FFF', color: '#64748B', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+            <ChevronRight size={16} />
+          </button>
+        </div>
+      </div>
+
+      {showOccupancyAlert && (
+        <div style={{
+          display: 'flex', alignItems: 'flex-start', gap: '10px',
+          padding: '12px 14px', background: '#FFFBEB', border: '1px solid #F59E0B', borderRadius: '2px',
+        }}>
+          <AlertTriangle size={16} color="#D97706" style={{ marginTop: 2, flexShrink: 0 }} />
+          <div style={{ fontSize: '13px', color: '#92400E', lineHeight: 1.45 }}>
+            Alta ocupação em {rhDayObj?.label} {rhDayObj?.date}: meta sugerida de <strong>{suggestedStaff}</strong> profissionais
+            {techSettings.autoScaleHistory ? ' (com ajuste pelo histórico da semana)' : ''}.
+          </div>
+        </div>
+      )}
+
+      <div className="week-strip" style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '8px' }}>
+        {days.map((day) => {
+          const active = rhDay === day.id;
+          const kind = rateKindForDay(day);
+          const guests = Number(guestCountByDay[day.id]) || 0;
+          const scaleCount = scaleCountForDay(day.id);
+          const label = dayLabelStatus(day.id);
+          const tone = dayMapTone(kind, { active, isToday: day.isToday });
+          const highlight = label === 'Confirmada' || label === 'Recusa' || label === 'Aguardando' || label === 'Enviada';
+          return (
+            <div
+              key={day.iso || day.id}
+              onClick={() => setRhDay(day.id)}
+              style={{
+                background: tone.background,
+                border: tone.border,
+                borderRadius: '2px',
+                padding: '12px 8px',
+                textAlign: 'left',
+                cursor: 'pointer',
+                position: 'relative',
+                boxShadow: kind !== 'week' && !active ? `inset 0 2px 0 0 ${tone.bar}` : 'none',
+              }}
+            >
+              {day.isToday && (
+                <div style={{ position: 'absolute', top: '6px', right: '6px', fontSize: '9px', fontWeight: 700, color: '#16A34A' }}>HOJE</div>
+              )}
+              <div style={{ fontSize: '13px', fontWeight: 600, color: tone.title }}>
+                {day.label} {day.date}
+              </div>
+              <div style={{ marginTop: '10px' }}>
+                <div style={{ fontSize: '20px', fontWeight: 600, color: '#0F172A', lineHeight: 1 }}>{scaleCount}</div>
+                <div style={{ fontSize: '10px', color: '#94A3B8', marginTop: '4px' }}>
+                  na escala{guests ? ` · ${guests} prev.` : ''}
                 </div>
               </div>
-            );
+              <div style={{
+                fontSize: '11px',
+                color: label === 'Confirmada' ? '#16A34A' : label === 'Recusa' ? '#DC2626' : highlight ? '#0066FF' : tone.meta,
+                marginTop: '6px',
+                fontWeight: highlight || kind === 'weekend' || kind === 'holiday' ? 600 : 500,
+              }}>
+                {label}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="kanban-row" style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '10px', alignItems: 'start' }}>
+        {kanbanColumns.map((col) => (
+          <div key={col.id} style={{ background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '2px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 12px 10px', borderBottom: '1px solid #E2E8F0' }}>
+              <div>
+                <div style={{ fontSize: '13px', fontWeight: 600, color: '#0F172A' }}>{col.title}</div>
+                <div style={{ fontSize: '11px', color: '#64748B' }}>{col.hint}</div>
+              </div>
+              <span style={{ fontSize: '12px', color: '#64748B', background: '#F1F5F9', padding: '1px 7px', borderRadius: '4px' }}>{col.count}</span>
+            </div>
+            <div style={{ padding: '8px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {col.cards.length === 0 && (
+                <div style={{ padding: '14px 10px', fontSize: '12px', color: '#94A3B8', textAlign: 'center' }}>Vazio</div>
+              )}
+              {col.cards.map((card) => {
+                const cost = card.people * dailyRateFor(card.role, rhKind, dailyRates);
+                const Icon = card.icon || Users;
+                return (
+                  <button
+                    key={`${col.id}-${card.sector}`}
+                    type="button"
+                    onClick={() => {
+                      setActiveRequest?.((prev) => ({
+                        ...(prev || {}),
+                        department: card.sector,
+                        shift: card.shift,
+                      }));
+                      setCurrentView('approval_details');
+                    }}
+                    style={{
+                      background: '#FFFFFF',
+                      border: '1px solid #E2E8F0',
+                      borderRadius: '2px',
+                      padding: '12px',
+                      textAlign: 'left',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <Icon size={14} color="#64748B" />
+                        <span style={{ fontSize: '13px', fontWeight: 600, color: '#0F172A' }}>{card.sector}</span>
+                      </div>
+                      {card.alert ? <AlertTriangle size={14} color="#DC2626" /> : null}
+                    </div>
+                    <div style={{ fontSize: '12px', color: '#64748B' }}>
+                      {rhDayObj?.label}, {rhDayObj?.date} · turno {card.shift}
+                    </div>
+                    <div style={{ fontSize: '12px', color: '#64748B', marginTop: '4px' }}>
+                      {card.people} na lista
+                    </div>
+                    <div style={{ fontSize: '13px', fontWeight: 600, color: '#0F172A', marginTop: '8px' }}>{formatBRL(cost)}</div>
+                    {card.progress && (
+                      <div style={{ fontSize: '11px', color: card.alert ? '#DC2626' : '#64748B', marginTop: '8px' }}>{card.progress}</div>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '2px', padding: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+        <div>
+          <div style={{ fontSize: '13px', fontWeight: 600, color: '#0F172A' }}>Custo da semana</div>
+          <div style={{ fontSize: '12px', color: '#64748B', marginTop: '2px' }}>
+            {rhGuests} total de pessoas · meta {suggestedStaff}
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
+          {[
+            { label: 'Semana', value: weekCost },
+            { label: 'Fim de semana', value: weekendCost },
+            { label: 'Feriados', value: 0 },
+            { label: 'Total', value: weekCost + weekendCost },
+          ].map((item) => (
+            <div key={item.label} style={{ textAlign: 'right' }}>
+              <div style={{ fontSize: '10px', color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{item.label}</div>
+              <div style={{ fontSize: '15px', fontWeight: 600, color: '#0F172A' }}>{formatBRL(item.value)}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
 }

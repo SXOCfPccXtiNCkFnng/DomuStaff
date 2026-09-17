@@ -1,4 +1,4 @@
-﻿-- ============================================================================
+-- ============================================================================
 -- DOMU STAFF: SCRIPT COMPLETO DE CONFIGURACAO DO BANCO DE DADOS SUPABASE
 -- Execute este script no SQL Editor do Supabase para inicializar tabelas,
 -- permissoes (RLS), seeds e sincronizacao automatica de usuarios.
@@ -316,7 +316,7 @@ begin
   )
   values (
     new.id,
-    'a0e1b2c3-d4e5-4f67-8899-000000000001',
+    null,
     coalesce(new.raw_user_meta_data->>'role', 'freelancer'),
     coalesce(new.raw_user_meta_data->>'name', split_part(new.email, '@', 1)),
     coalesce(new.raw_user_meta_data->>'phone', ''),

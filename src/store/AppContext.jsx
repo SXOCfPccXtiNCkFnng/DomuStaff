@@ -1,11 +1,86 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import {
-  GERENCIA_DAYS, GERENCIA_SECTORS, PROFILE_HOME, SECTOR_SHIFT,
+  GERENCIA_DAYS, GERENCIA_SECTORS, PROFILE_HOME, SECTOR_SHIFT, DAILY_RATES,
+  SHIFT_OPTIONS, defaultShiftForSector,
   formatInviteDays, inviteDateSummary, dailyRateFor, rateKindForDay, initialsFrom,
+  buildWeekDays, setGerenciaDays, formatWeekRangeLabel,
 } from '../lib/constants';
 import * as api from '../lib/api';
+import { isSupabaseConfigured, supabase } from '../lib/supabase';
+import { playNotifySound } from '../lib/notifySound';
 
 const AppContext = createContext(null);
+const JOIN_INVITE_KEY = 'domu_join_invite';
+
+function normalizeInviteRole(role) {
+  const r = String(role || '').trim().toLowerCase();
+  if (r === 'gerencia' || r === 'gestao' || r === 'manager') return 'gerencia';
+  if (r === 'rh' || r === 'hr') return 'rh';
+  if (r === 'freelancer' || r === 'freela') return 'freelancer';
+  return null;
+}
+
+function readStoredJoinInvite() {
+  try {
+    const raw = sessionStorage.getItem(JOIN_INVITE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    const role = normalizeInviteRole(parsed?.role);
+    const code = String(parsed?.code || '').trim().toUpperCase();
+    if (!role && !code) return null;
+    return { code, role: role || 'freelancer' };
+  } catch {
+    return null;
+  }
+}
+
+function parseJoinInviteFromUrl() {
+  if (typeof window === 'undefined') return readStoredJoinInvite();
+  try {
+    const url = new URL(window.location.href);
+    const path = url.pathname.replace(/\/+$/, '') || '/';
+    const code = String(url.searchParams.get('code') || '').trim().toUpperCase();
+    const role = normalizeInviteRole(url.searchParams.get('role'));
+    const isJoinPath = path === '/join' || path.endsWith('/join');
+    if (isJoinPath || code || role) {
+      const invite = {
+        code,
+        role: role || 'freelancer',
+      };
+      sessionStorage.setItem(JOIN_INVITE_KEY, JSON.stringify(invite));
+      if (isJoinPath || code || url.searchParams.has('role')) {
+        window.history.replaceState({}, '', '/');
+      }
+      return invite;
+    }
+  } catch {
+    /* ignore */
+  }
+  return readStoredJoinInvite();
+}
+
+function clearJoinInviteStorage() {
+  try { sessionStorage.removeItem(JOIN_INVITE_KEY); } catch { /* ignore */ }
+}
+
+function friendlyMessage(msg, fallback = 'Algo deu errado. Tente de novo.') {
+  if (msg == null || msg === '') return fallback;
+  const s = String(msg);
+  const lower = s.toLowerCase();
+  if (/duplicate key|unique constraint|violates unique|already exists/i.test(s)) {
+    return 'Essa pessoa já está na escala deste dia. Atualize a página se a lista parecer desatualizada.';
+  }
+  if (/foreign key|not-null|check constraint|permission denied|row-level security|rls/i.test(s)) {
+    return 'Não foi possível salvar a escala agora. Tente de novo em instantes.';
+  }
+  if (/supabase|postgres|sql editor|auth\.users|\.env\.local|setup_complete|jwt|pgrst/i.test(s)) {
+    return 'Não foi possível concluir agora. Tente novamente em instantes.';
+  }
+  if (/^[a-z_]+$/.test(s) || lower.includes('error') && lower.includes('code')) {
+    return fallback;
+  }
+  return s;
+}
 
 export function useApp() {
   const ctx = useContext(AppContext);
@@ -15,7 +90,6 @@ export function useApp() {
 
 export function AppProvider({ children }) {
   const [bootstrapping, setBootstrapping] = useState(true);
-  const [currentView, setCurrentView] = useState('login');
   const [showPassword, setShowPassword] = useState(false);
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
@@ -31,39 +105,57 @@ export function AppProvider({ children }) {
   const [busy, setBusy] = useState(false);
 
   const [account, setAccount] = useState(null);
+  const [joinInvite, setJoinInvite] = useState(() => parseJoinInviteFromUrl());
   const [onboardingStep, setOnboardingStep] = useState(1);
-  const [selectedProfile, setSelectedProfile] = useState('freelancer');
-  const [onboardingData, setOnboardingData] = useState({
-    name: '',
-    hotelOrRole: 'Hotel Atlântico Copacabana',
-    department: '',
-    phone: '',
-    primaryRole: 'Garçom',
-    city: 'Rio de Janeiro',
-    availableDays: ['Sex', 'Sáb', 'Dom'],
-    availableTimes: ['Tarde / Noite'],
-    whatsappNotifications: true,
-    emergencyAlerts: true,
-    photoUrl: '',
+  const [selectedProfile, setSelectedProfile] = useState(() => {
+    const invite = parseJoinInviteFromUrl();
+    return invite?.role || 'freelancer';
   });
+  const [onboardingData, setOnboardingData] = useState(() => {
+    const invite = parseJoinInviteFromUrl();
+    return {
+      name: '',
+      hotelOrRole: '',
+      hotelMode: invite?.code ? 'join' : 'create',
+      hotelCnpj: '',
+      hotelCode: invite?.code || '',
+      department: invite?.role === 'gerencia'
+        ? 'Gerência Operacional'
+        : invite?.role === 'rh'
+          ? 'RH / Controladoria'
+          : '',
+      phone: '',
+      primaryRole: 'Garçom',
+      city: '',
+      availableDays: ['Sex', 'Sáb', 'Dom'],
+      availableTimes: ['Tarde / Noite'],
+      whatsappNotifications: true,
+      emergencyAlerts: true,
+      photoUrl: '',
+    };
+  });
+  const [currentView, setCurrentView] = useState(() => (parseJoinInviteFromUrl() ? 'register' : 'login'));
 
   const [activeRequest, setActiveRequest] = useState({
     department: 'Restaurante',
-    dayText: 'Sexta, 19/09',
-    fullDateText: 'Sexta, 19 de setembro de 2025',
-    guests: 500,
-    recommended: '22 – 28 pessoas',
-    requestedPeople: 14,
+    dayText: '',
+    fullDateText: '',
+    guests: 0,
+    recommended: '—',
+    requestedPeople: 0,
     status: 'SOLICITADA',
+    shift: '',
   });
 
   const [freelancersList, setFreelancersList] = useState([]);
-  const [selectedIds, setSelectedIds] = useState(['1', '2', '3', '4', '5', '6', '7', '8']);
+  const [managementTeam, setManagementTeam] = useState([]);
+  const [selectedIds, setSelectedIds] = useState([]);
   const [activeTab, setActiveTab] = useState('selecionados');
   const [toast, setToast] = useState(null);
   const [navOpen, setNavOpen] = useState(false);
-  const [selectedGerenciaDay, setSelectedGerenciaDay] = useState('sex');
+  const [selectedGerenciaDay, setSelectedGerenciaDay] = useState(() => buildWeekDays(0).find((d) => d.isToday)?.id || 'seg');
   const [selectedSector, setSelectedSector] = useState('restaurante');
+  const [shiftByDay, setShiftByDay] = useState({});
   const [gerenciaSearchQuery, setGerenciaSearchQuery] = useState('');
   const [freelancerBaseQuery, setFreelancerBaseQuery] = useState('');
   const [freelancerBaseSector, setFreelancerBaseSector] = useState('todos');
@@ -76,68 +168,285 @@ export function AppProvider({ children }) {
     seg: [], ter: [], qua: [], qui: [], sex: [], sab: [], dom: [],
   });
   const [sentDays, setSentDays] = useState({});
+  const [requestStatusByDay, setRequestStatusByDay] = useState({});
+  const [sentBaselineByDay, setSentBaselineByDay] = useState({});
+  const [invitedByDay, setInvitedByDay] = useState({});
   const [checkedInIds, setCheckedInIds] = useState([]);
-  const [rhDay, setRhDay] = useState('sex');
+  const [rhDay, setRhDay] = useState(() => buildWeekDays(0).find((d) => d.isToday)?.id || 'seg');
   const [dailyRates, setDailyRates] = useState([]);
   const [guestCountByDay, setGuestCountByDay] = useState(() =>
-    Object.fromEntries(GERENCIA_DAYS.map((d) => [d.id, d.guests]))
+    Object.fromEntries(buildWeekDays(0).map((d) => [d.id, 0]))
   );
+  const [occupancyByIso, setOccupancyByIso] = useState({});
+  const [weekOffset, setWeekOffset] = useState(0);
+  const [weekDays, setWeekDays] = useState(() => buildWeekDays(0));
   const [techSettings, setTechSettings] = useState({
     whatsappNotifications: true,
     emergencyAlerts: true,
     dailyEmail: false,
     inviteTimeoutHours: 4,
+    timeoutMinutes: 30,
     timezone: 'America/Sao_Paulo',
     autoSubstitute: true,
     returnAlerts: true,
     shiftReminder: true,
     presenceNotify: true,
+    alertPeak: true,
+    alertConfirmations: true,
+    peoplePerStaff: 25,
+    minStaff: 6,
+    suggestOnHighOccupancy: false,
+    autoScaleHistory: false,
+    connectedEstablishments: [],
   });
   const [freelancerInvites, setFreelancerInvites] = useState([]);
   const [uuidByCode, setUuidByCode] = useState({});
-  const [hotel, setHotel] = useState({ name: 'Hotel Atlântico Copacabana', city: 'Rio de Janeiro' });
+  const [myProfessionalUuid, setMyProfessionalUuid] = useState(null);
+  const [hotel, setHotel] = useState({ name: '', city: '', code: '', cnpj: '' });
+  const [savingSettings, setSavingSettings] = useState(false);
+  const [inboxBadge, setInboxBadge] = useState(0);
+  const [notifications, setNotifications] = useState([]);
+  const [notifPanelTick, setNotifPanelTick] = useState(0);
+  const requestOpenNotifPanel = () => setNotifPanelTick((n) => n + 1);
+  const accountRef = React.useRef(account);
+  accountRef.current = account;
+  const applyHotelDataRef = React.useRef(null);
+  const notificationsRef = React.useRef(notifications);
+  notificationsRef.current = notifications;
 
-  const triggerToast = (msg) => {
-    setToast(msg);
-    setTimeout(() => setToast(null), 3500);
+  const pushNotification = (item, { sound = true, toast: showToast = true } = {}) => {
+    const sourceId = item.sourceId || null;
+    if (sourceId && notificationsRef.current.some((n) => n.sourceId === sourceId)) {
+      return;
+    }
+    const entry = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      title: item.title,
+      body: item.body || '',
+      at: item.at || new Date().toISOString(),
+      read: false,
+      view: item.view || null,
+      kind: item.kind || 'info',
+      sourceId,
+    };
+    setNotifications((prev) => [entry, ...prev].slice(0, 60));
+    setInboxBadge((n) => n + 1);
+    if (showToast) {
+      triggerToast(item.title, 'notify', { sound });
+    } else if (sound) {
+      playNotifySound();
+    }
+    if (typeof Notification !== 'undefined' && Notification.permission === 'granted' && showToast) {
+      try {
+        new Notification('Domu Staff', { body: item.body || item.title, silent: true });
+      } catch { /* ignore */ }
+    }
+  };
+
+  const markNotificationRead = (id) => {
+    setNotifications((prev) => {
+      const next = prev.map((n) => (n.id === id ? { ...n, read: true } : n));
+      setInboxBadge(next.filter((n) => !n.read).length);
+      return next;
+    });
+  };
+
+  const markAllNotificationsRead = () => {
+    setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+    setInboxBadge(0);
+  };
+
+  const clearInboxBadge = () => setInboxBadge(0);
+
+  const triggerToast = (msg, type = 'ok', opts = {}) => {
+    const withSound = opts.sound === true || type === 'notify';
+    setToast({
+      msg: friendlyMessage(msg, type === 'err' ? 'Não foi possível concluir.' : 'Pronto.'),
+      type: type === 'notify' ? 'ok' : type,
+      sound: withSound,
+    });
+    if (withSound) playNotifySound();
+    window.clearTimeout(triggerToast._t);
+    triggerToast._t = window.setTimeout(() => setToast(null), withSound ? 6500 : 4500);
+  };
+
+  const remapGuestsForWeek = (days, byIso) => {
+    setGuestCountByDay(Object.fromEntries(days.map((d) => [d.id, byIso[d.iso] ?? 0])));
+  };
+
+  const shiftWeek = (delta) => {
+    const next = weekOffset + delta;
+    const days = buildWeekDays(next);
+    setWeekOffset(next);
+    setWeekDays(days);
+    setGerenciaDays(days);
+    remapGuestsForWeek(days, occupancyByIso);
+    const today = days.find((d) => d.isToday);
+    if (today) {
+      setRhDay(today.id);
+      setSelectedGerenciaDay(today.id);
+    }
   };
 
   const applyHotelData = (data) => {
-    setFreelancersList(data.professionals);
-    setDailyRates(data.rates.length ? data.rates : []);
-    setGuestCountByDay(data.occupancy);
+    setFreelancersList(data.professionals || []);
+    setManagementTeam(Array.isArray(data.managementTeam) ? data.managementTeam : []);
+    setDailyRates(data.rates?.length ? data.rates : DAILY_RATES.map((r) => ({ ...r })));
+    const byIso = data.occupancyByIso || {};
+    // Compat: occupancy keyed by day id for current week
+    if (!Object.keys(byIso).length && data.occupancy) {
+      weekDays.forEach((d) => {
+        if (data.occupancy[d.id] != null) byIso[d.iso] = data.occupancy[d.id];
+      });
+    }
+    setOccupancyByIso(byIso);
+    remapGuestsForWeek(weekDays, byIso);
     setSelectedFreelancersByDay(data.selectedByDay);
+    setShiftByDay(data.shiftByDay || {});
     setSentDays(data.sentDays);
+    setRequestStatusByDay(data.requestStatusByDay || {});
+    // Baseline do que já foi enviado — trava "Reenviar" até mudar a equipe
+    const baseline = {};
+    Object.entries(data.requestStatusByDay || {}).forEach(([dayId, status]) => {
+      if (!['requested', 'sent', 'confirmed'].includes(status)) return;
+      const codes = data.selectedByDay?.[dayId] || [];
+      GERENCIA_SECTORS.forEach((sec) => {
+        const sectorCodes = codes
+          .filter((id) => (data.professionals || []).find((p) => p.id === id)?.sector === sec.id)
+          .sort();
+        baseline[`${dayId}:${sec.id}`] = sectorCodes.join('|');
+      });
+    });
+    setSentBaselineByDay(baseline);
+    setInvitedByDay(data.invitedByDay || {});
     setReturnedByDay(data.returnedByDay);
     setFreelancerInvites(data.invites);
     setCheckedInIds(data.checkins);
-    setTechSettings((prev) => ({ ...prev, ...data.hotelSettings }));
-    setHotel(data.hotel);
+    setTechSettings((prev) => {
+      const merged = { ...prev, ...data.hotelSettings };
+      if (merged.timeoutMinutes == null && merged.inviteTimeoutHours != null) {
+        merged.timeoutMinutes = Math.round(Number(merged.inviteTimeoutHours) * 60) || 30;
+      }
+      if (merged.timeoutMinutes == null) merged.timeoutMinutes = 30;
+      return merged;
+    });
+    setHotel({
+      ...(data.hotel || {}),
+      city: data.hotel?.city || '',
+    });
     setUuidByCode(data._uuidByCode || Object.fromEntries((data.professionals || []).map((p) => [p.id, p.uuid])));
+    if (data._myProfessionalUuid) setMyProfessionalUuid(data._myProfessionalUuid);
+    else {
+      const mine = (data.professionals || []).find((p) =>
+        (accountRef.current?.professionalCode && p.id === accountRef.current.professionalCode)
+        || (p.profileId && p.profileId === accountRef.current?.id),
+      );
+      setMyProfessionalUuid(mine?.uuid || null);
+    }
+  };
+  applyHotelDataRef.current = applyHotelData;
+
+  const applyJoinInviteToOnboarding = (invite, acc = null) => {
+    if (!invite?.role && !invite?.code) return;
+    if (invite.role) setSelectedProfile(invite.role);
+    setOnboardingData((prev) => ({
+      ...prev,
+      name: acc?.name || prev.name,
+      phone: acc?.phone || prev.phone,
+      hotelMode: invite.code ? 'join' : (prev.hotelMode || 'create'),
+      hotelCode: invite.code || prev.hotelCode || '',
+      department: invite.role === 'gerencia'
+        ? (prev.department || 'Gerência Operacional')
+        : invite.role === 'rh'
+          ? (prev.department || 'RH / Controladoria')
+          : prev.department,
+    }));
   };
 
   const hydrateAccount = async (acc) => {
     setAccount(acc);
-    setSelectedProfile(acc.role);
+    const invite = joinInvite || readStoredJoinInvite();
+    const roleForOnboarding = (!acc.onboarded && invite?.role) ? invite.role : acc.role;
+    setSelectedProfile(roleForOnboarding);
     setOnboardingData({
       name: acc.name,
-      hotelOrRole: acc.hotelOrRole,
-      department: acc.department,
-      phone: acc.phone,
+      hotelOrRole: acc.hotelOrRole || '',
+      department: acc.department || (
+        roleForOnboarding === 'gerencia' ? 'Gerência Operacional'
+          : roleForOnboarding === 'rh' ? 'RH / Controladoria' : ''
+      ),
+      phone: acc.phone || '',
       primaryRole: acc.primaryRole,
-      city: acc.city,
-      availableDays: acc.availableDays,
-      availableTimes: acc.availableTimes,
+      city: acc.city || '',
+      hotelMode: (!acc.onboarded && invite?.code) ? 'join' : 'create',
+      hotelCnpj: acc.hotelCnpj || acc.settings?.hotelCnpj || '',
+      hotelCode: (!acc.onboarded && invite?.code)
+        ? invite.code
+        : (acc.hotelCode || acc.settings?.hotelCode || ''),
+      availableDays: acc.availableDays?.length ? acc.availableDays : ['Sex', 'Sáb', 'Dom'],
+      availableTimes: acc.availableTimes?.length ? acc.availableTimes : ['Tarde / Noite'],
       whatsappNotifications: acc.settings?.whatsappNotifications !== false,
       emergencyAlerts: acc.settings?.emergencyAlerts !== false,
       photoUrl: acc.photoUrl || '',
     });
+    setTechSettings((prev) => {
+      const fromAcc = Array.isArray(acc.settings?.connectedEstablishments)
+        ? acc.settings.connectedEstablishments
+        : [];
+      const cleaned = acc.role === 'freelancer'
+        ? fromAcc.filter((h) => h && h.joinedAt !== 'Vinculado')
+        : fromAcc;
+      return {
+        ...prev,
+        ...(acc.settings || {}),
+        connectedEstablishments: cleaned.length ? cleaned : (acc.role === 'freelancer' ? [] : (prev.connectedEstablishments || [])),
+      };
+    });
     const data = await api.loadHotelData(acc);
     applyHotelData(data);
+    if ((data.hotel?.id || data.hotel?.code || data.hotel?.name) && acc.role !== 'freelancer') {
+      setTechSettings((prev) => {
+        const list = Array.isArray(prev.connectedEstablishments) ? prev.connectedEstablishments : [];
+        const code = data.hotel.code || acc.settings?.hotelCode || acc.hotelCode || '';
+        const already = list.some((h) => (code && h.code === code) || (data.hotel.id && h.id === data.hotel.id));
+        if (already) return prev;
+        const primary = {
+          id: data.hotel.id || 'primary',
+          code: code || '—',
+          name: data.hotel.name || acc.hotelOrRole || 'Estabelecimento vinculado',
+          category: 'Principal',
+          role: acc.role === 'gerencia'
+            ? (acc.department || 'Gerência Operacional')
+            : (acc.department || 'RH / Controladoria'),
+          status: 'Ativo',
+          joinedAt: 'Vinculado',
+          totalShifts: 0,
+          rating: null,
+          isPrimary: true,
+        };
+        return { ...prev, connectedEstablishments: [primary, ...list] };
+      });
+      setHotel((prev) => ({
+        ...prev,
+        ...(data.hotel || {}),
+        code: data.hotel?.code || prev.code || acc.settings?.hotelCode || '',
+        name: data.hotel?.name || prev.name || acc.hotelOrRole || '',
+      }));
+    } else if (data.hotel?.id || data.hotel?.code || data.hotel?.name) {
+      setHotel((prev) => ({
+        ...prev,
+        ...(data.hotel || {}),
+        code: data.hotel?.code || prev.code || acc.settings?.hotelCode || '',
+        name: data.hotel?.name || prev.name || acc.hotelOrRole || '',
+      }));
+    }
     if (!acc.onboarded) {
+      if (invite) setJoinInvite(invite);
       setOnboardingStep(1);
       setCurrentView('onboarding');
     } else {
+      clearJoinInviteStorage();
+      setJoinInvite(null);
       setCurrentView(PROFILE_HOME[acc.role] || 'gerencia_montar_escala');
     }
   };
@@ -149,7 +458,16 @@ export function AppProvider({ children }) {
         const session = await api.getSession();
         if (!alive) return;
         if (session?.account) await hydrateAccount(session.account);
-        else setCurrentView('login');
+        else {
+          const invite = joinInvite || readStoredJoinInvite();
+          if (invite) {
+            setJoinInvite(invite);
+            applyJoinInviteToOnboarding(invite);
+            setCurrentView('register');
+          } else {
+            setCurrentView('login');
+          }
+        }
       } catch {
         if (alive) setCurrentView('login');
       } finally {
@@ -159,7 +477,210 @@ export function AppProvider({ children }) {
     return () => { alive = false; };
   }, []);
 
-    const signInWith = async (email, password) => {
+  // Tempo real: escalas enviadas / devolvidas / convites sem recarregar a página
+  useEffect(() => {
+    if (!isSupabaseConfigured || !supabase || !account?.hotelId) return undefined;
+
+    let debounceTimer = null;
+    const hotelId = account.hotelId;
+    const role = account.role;
+    const myId = account.id;
+
+    const refreshHotel = async () => {
+      try {
+        const acc = accountRef.current;
+        if (!acc?.hotelId) return;
+        const data = await api.loadHotelData(acc);
+        applyHotelDataRef.current?.(data);
+      } catch {
+        /* ignore transient realtime errors */
+      }
+    };
+
+    const channel = supabase.channel(`hotel-live-${hotelId}-${role || 'x'}`);
+
+    if (role === 'rh' || role === 'gerencia') {
+      channel.on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'shift_requests',
+          filter: `hotel_id=eq.${hotelId}`,
+        },
+        (payload) => {
+          const row = payload.new || {};
+          const prev = payload.old || {};
+          const status = row.status;
+          const prevStatus = prev.status;
+          const createdBy = row.created_by;
+
+          window.clearTimeout(debounceTimer);
+          debounceTimer = window.setTimeout(() => {
+            refreshHotel();
+          }, 350);
+
+          const becameRequested = (status === 'requested' || status === 'sent')
+            && prevStatus !== 'requested'
+            && prevStatus !== 'sent';
+          const becameReturned = status === 'returned' && prevStatus !== 'returned';
+
+          if (role === 'rh' && becameRequested) {
+            if (createdBy && createdBy === myId) return;
+            pushNotification({
+              title: 'Nova escala da Gerência',
+              body: 'Há uma solicitação pronta para revisar e aprovar.',
+              view: 'main_kanban',
+              kind: 'scale',
+              sourceId: row.id ? `scale-${row.id}-${status}` : null,
+            });
+          }
+
+          if (role === 'gerencia' && becameReturned) {
+            if (row.returned_by && row.returned_by === myId) return;
+            pushNotification({
+              title: 'Escala devolvida pelo RH',
+              body: row.returned_reason
+                ? `Motivo: ${row.returned_reason}`
+                : 'Abra Meus pedidos para ver a observação.',
+              view: 'gerencia_pedidos',
+              kind: 'return',
+              sourceId: row.id ? `return-${row.id}` : null,
+            });
+          }
+        },
+      );
+
+      // Aceite / recusa de convite pelos freelancers
+      channel.on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'invites',
+          filter: `hotel_id=eq.${hotelId}`,
+        },
+        (payload) => {
+          const row = payload.new || {};
+          const prev = payload.old || {};
+          if (!row.status || row.status === prev.status) return;
+
+          window.clearTimeout(debounceTimer);
+          debounceTimer = window.setTimeout(() => {
+            refreshHotel();
+          }, 300);
+
+          const who = [row.role, row.sector, row.time].filter(Boolean).join(' · ');
+          if (row.status === 'accepted') {
+            pushNotification({
+              title: 'Convite aceito',
+              body: who || 'Um profissional confirmou a escala.',
+              view: 'main_kanban',
+              kind: 'invite-accepted',
+              sourceId: row.id ? `invite-ok-${row.id}` : null,
+            });
+          } else if (row.status === 'declined') {
+            pushNotification({
+              title: 'Convite recusado',
+              body: who || 'Um profissional recusou — chame um substituto.',
+              view: 'approval_details',
+              kind: 'invite-declined',
+              sourceId: row.id ? `invite-no-${row.id}` : null,
+            });
+          }
+        },
+      );
+    }
+
+    if (role === 'freelancer') {
+      channel.on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'invites',
+          filter: `hotel_id=eq.${hotelId}`,
+        },
+        (payload) => {
+          const row = payload.new || {};
+          const proUuid = myProfessionalUuid;
+          // Só notifica o convite deste profissional
+          if (!proUuid || row.professional_id !== proUuid) return;
+
+          window.clearTimeout(debounceTimer);
+          debounceTimer = window.setTimeout(() => {
+            refreshHotel();
+          }, 300);
+
+          pushNotification({
+            title: 'Novo convite de escala',
+            body: [row.sector, row.role, row.time].filter(Boolean).join(' · ') || 'Abra Convites para responder.',
+            view: 'freelancer_convites',
+            kind: 'invite',
+            sourceId: row.id ? `invite-${row.id}` : null,
+          });
+        },
+      );
+    }
+
+    channel.subscribe();
+
+    if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+      try { Notification.requestPermission(); } catch { /* ignore */ }
+    }
+
+    return () => {
+      window.clearTimeout(debounceTimer);
+      supabase.removeChannel(channel);
+    };
+  }, [account?.hotelId, account?.role, account?.id, myProfessionalUuid]);
+
+  // Histórico: convites pendentes já existentes (sem spam de som)
+  useEffect(() => {
+    if (account?.role !== 'freelancer') return;
+    freelancerInvites
+      .filter((i) => i.status === 'pending')
+      .forEach((inv) => {
+        pushNotification({
+          title: 'Convite pendente',
+          body: [inv.hotel, inv.sector, inv.time].filter(Boolean).join(' · '),
+          view: 'freelancer_convites',
+          kind: 'invite',
+          sourceId: `invite-${inv.id}`,
+          at: inv.createdAt || undefined,
+        }, { sound: false, toast: false });
+      });
+  }, [account?.role, freelancerInvites]);
+
+  // Histórico: devoluções / escalas pendentes para staff
+  useEffect(() => {
+    if (account?.role === 'gerencia') {
+      Object.entries(returnedByDay || {}).forEach(([dayId, info]) => {
+        if (!info?.reason) return;
+        pushNotification({
+          title: 'Escala devolvida pelo RH',
+          body: info.reason,
+          view: 'gerencia_pedidos',
+          kind: 'return',
+          sourceId: `return-local-${dayId}-${String(info.reason).slice(0, 24)}`,
+        }, { sound: false, toast: false });
+      });
+    }
+    if (account?.role === 'rh') {
+      Object.entries(requestStatusByDay || {}).forEach(([dayId, status]) => {
+        if (status !== 'requested' && status !== 'sent') return;
+        pushNotification({
+          title: status === 'sent' ? 'Escala enviada aos freelas' : 'Escala aguardando aprovação',
+          body: `Dia ${dayId.toUpperCase()} — abra Escalas da semana.`,
+          view: status === 'sent' ? 'approval_details' : 'main_kanban',
+          kind: 'scale',
+          sourceId: `status-${dayId}-${status}`,
+        }, { sound: false, toast: false });
+      });
+    }
+  }, [account?.role, returnedByDay, requestStatusByDay]);
+
+  const signInWith = async (email, password) => {
     setAuthError('');
     const cleanEmail = (email || '').trim();
     if (!cleanEmail) {
@@ -181,8 +702,10 @@ export function AppProvider({ children }) {
       const raw = err.message || '';
       if (raw.includes('Invalid login') || raw.includes('invalid_credentials') || raw.includes('incorretos')) {
         setAuthError('E-mail ou senha incorretos. Verifique os dados digitados e tente novamente.');
-      } else if (raw.includes('not confirmed') || raw.includes('confirm')) {
-        setAuthError('Por favor, confirme seu e-mail para acessar a plataforma.');
+      } else if (raw.includes('not confirmed') || raw.includes('Confirm email') || raw.includes('Confirm user') || raw.includes('confirm')) {
+        setAuthError(
+          'Seu e-mail ainda não foi confirmado. Verifique sua caixa de entrada ou fale com o suporte do Domu Staff.'
+        );
       } else if (raw.includes('rate limit') || raw.includes('Too many')) {
         setAuthError('Muitas tentativas em sequência. Aguarde alguns instantes e tente novamente.');
       } else {
@@ -258,7 +781,9 @@ export function AppProvider({ children }) {
 
     setBusy(true);
     try {
-      const assignedRole = registerType === 'establishment' ? 'rh' : 'freelancer';
+      const invite = joinInvite || readStoredJoinInvite();
+      const assignedRole = invite?.role
+        || (registerType === 'establishment' ? 'rh' : 'freelancer');
       const { account: acc, hasSession } = await api.signUp({
         name: trimmedName,
         email: trimmedEmail,
@@ -268,9 +793,14 @@ export function AppProvider({ children }) {
         role: assignedRole,
       });
 
-      if (hasSession || acc) {
+      if (invite) {
+        setJoinInvite(invite);
+        applyJoinInviteToOnboarding(invite, acc);
+      }
+
+      if ((hasSession || acc) && acc) {
         await hydrateAccount(acc);
-        triggerToast('Conta criada com sucesso! Dados validados e sincronizados.');
+        triggerToast('Conta criada com sucesso! Continue a configuração.');
       } else {
         triggerToast('Cadastro realizado! Por favor, faça login com suas credenciais.');
         setCurrentView('login');
@@ -297,12 +827,15 @@ export function AppProvider({ children }) {
       }
 
       const next = await api.saveOnboarding(accountId, {
-        role: selectedProfile,
+        role: joinInvite?.role || selectedProfile,
         name: onboardingData.name,
         phone: onboardingData.phone,
         department: onboardingData.department,
         primaryRole: onboardingData.primaryRole,
         hotelOrRole: onboardingData.hotelOrRole,
+        hotelMode: (joinInvite?.code || onboardingData.hotelMode === 'join') ? 'join' : (onboardingData.hotelMode || 'create'),
+        hotelCnpj: onboardingData.hotelCnpj || '',
+        hotelCode: joinInvite?.code || onboardingData.hotelCode || '',
         city: onboardingData.city,
         availableDays: onboardingData.availableDays,
         availableTimes: onboardingData.availableTimes,
@@ -317,10 +850,35 @@ export function AppProvider({ children }) {
 
       setAccount(next);
       setSelectedProfile(next.role || selectedProfile);
-      triggerToast('Configuração concluída! Bem-vindo ao painel.');
+      setOnboardingData((prev) => ({
+        ...prev,
+        hotelOrRole: next.hotelOrRole || prev.hotelOrRole,
+        hotelCode: next.hotelCode || next.settings?.hotelCode || prev.hotelCode,
+        hotelCnpj: next.hotelCnpj || next.settings?.hotelCnpj || prev.hotelCnpj,
+      }));
+      setTechSettings((prev) => ({
+        ...prev,
+        ...(next.settings || {}),
+        connectedEstablishments: Array.isArray(next.settings?.connectedEstablishments)
+          ? next.settings.connectedEstablishments
+          : (prev.connectedEstablishments || []),
+      }));
+      try {
+        const data = await api.loadHotelData(next);
+        applyHotelData(data);
+      } catch {
+        /* hotel data opcional no fim do onboarding */
+      }
+      triggerToast(
+        next.hotelCode || next.settings?.hotelCode
+          ? `Configuração concluída! Você está vinculado a ${next.hotelOrRole || next.settings?.hotelCode || 'o estabelecimento'}.`
+          : 'Configuração concluída! Bem-vindo ao painel.'
+      );
       setCurrentView(PROFILE_HOME[next.role || selectedProfile] || 'freelancer_convites');
+      clearJoinInviteStorage();
+      setJoinInvite(null);
     } catch (err) {
-      triggerToast(err.message || 'Não foi possível salvar o onboarding.');
+      triggerToast(err.message || 'Não foi possível salvar o onboarding.', 'err');
     } finally {
       setBusy(false);
     }
@@ -334,29 +892,91 @@ export function AppProvider({ children }) {
     triggerToast('Você saiu da conta.');
   };
 
-  const updateGuestCount = async (dayId, value) => {
-    const n = Math.max(0, parseInt(value, 10) || 0);
-    setGuestCountByDay((prev) => ({ ...prev, [dayId]: n }));
-    try { await api.saveOccupancy(account?.hotelId, dayId, n); } catch (err) { triggerToast(err.message); }
+  const updateGuestCount = (dayId, value) => {
+    const next = value === '' || value === null
+      ? ''
+      : Math.max(0, parseInt(String(value).replace(/\D/g, ''), 10) || 0);
+    const day = weekDays.find((d) => d.id === dayId) || GERENCIA_DAYS.find((d) => d.id === dayId);
+    setGuestCountByDay((prev) => ({ ...prev, [dayId]: next }));
+    if (day?.iso && next !== '') {
+      setOccupancyByIso((prev) => ({ ...prev, [day.iso]: next }));
+    }
   };
 
-  const updateDailyRate = async (role, kind, value) => {
-    const n = Math.max(0, parseInt(value, 10) || 0);
-    setDailyRates((prev) => prev.map((row) => (row.role === role ? { ...row, [kind]: n } : row)));
-    try { await api.saveRate(account?.hotelId, role, kind, n); } catch (err) { triggerToast(err.message); }
-  };
-
-  const persistDraft = async (nextByDay = selectedFreelancersByDay) => {
+  const persistOccupancyDay = async (dayId) => {
+    if (!account?.hotelId) return;
+    const day = weekDays.find((d) => d.id === dayId) || GERENCIA_DAYS.find((d) => d.id === dayId);
+    if (!day?.iso) return;
+    const raw = guestCountByDay[dayId];
+    const n = raw === '' || raw == null ? 0 : Math.max(0, parseInt(raw, 10) || 0);
     try {
-      await api.saveDraftScale({
-        hotelId: account?.hotelId,
-        sector: selectedSector,
-        dayId: selectedGerenciaDay,
-        professionalCodes: nextByDay[selectedGerenciaDay] || [],
-        uuidByCode,
-      });
+      await api.saveOccupancy(account.hotelId, dayId, n, day.iso);
     } catch (err) {
-      triggerToast(err.message);
+      triggerToast(err.message || 'Não foi possível salvar a previsão de pessoas.', 'err');
+    }
+  };
+
+  const getShiftForDay = (dayId, sectorId = selectedSector) => {
+    const entry = shiftByDay[dayId];
+    if (entry && typeof entry === 'object' && entry[sectorId]) return entry[sectorId];
+    if (typeof entry === 'string' && entry) return entry;
+    return defaultShiftForSector(sectorId).time;
+  };
+
+  const updateDailyRate = (role, kind, value) => {
+    const next = value === '' || value === null
+      ? ''
+      : Math.max(0, parseInt(String(value).replace(/\D/g, ''), 10) || 0);
+    setDailyRates((prev) => {
+      const base = prev.length ? prev : DAILY_RATES.map((r) => ({ ...r }));
+      return base.map((row) => (row.role === role ? { ...row, [kind]: next } : row));
+    });
+  };
+
+  const persistDraft = (nextByDay = selectedFreelancersByDay, overrides = {}) => {
+    const dayId = overrides.dayId || selectedGerenciaDay;
+    const sector = overrides.sector || selectedSector;
+    const allCodes = [...(nextByDay[dayId] || [])];
+    const professionalCodes = allCodes.filter((code) => {
+      const f = freelancersList.find((p) => p.id === code);
+      return !f?.sector || f.sector === sector;
+    });
+    persistDraft._pending = {
+      hotelId: account?.hotelId,
+      sector,
+      dayId,
+      professionalCodes,
+      uuidByCode,
+      createdBy: account?.id,
+      shift: getShiftForDay(dayId, sector),
+      ...overrides,
+      professionalCodes, // garante filtro mesmo se overrides trouxer lista cheia
+    };
+    if (persistDraft._busy) return;
+    persistDraft._busy = true;
+    (async () => {
+      while (persistDraft._pending) {
+        const snap = persistDraft._pending;
+        persistDraft._pending = null;
+        try {
+          await api.saveDraftScale(snap);
+        } catch (err) {
+          triggerToast(err.message || 'Não foi possível salvar a seleção.', 'err');
+        }
+      }
+      persistDraft._busy = false;
+    })();
+  };
+
+  const setShiftForDay = (dayId, time, sectorId = selectedSector) => {
+    setShiftByDay((prev) => {
+      const prevEntry = prev[dayId];
+      const bySector = prevEntry && typeof prevEntry === 'object' ? { ...prevEntry } : {};
+      bySector[sectorId] = time;
+      return { ...prev, [dayId]: bySector };
+    });
+    if (dayId === selectedGerenciaDay) {
+      persistDraft(selectedFreelancersByDay, { dayId, sector: sectorId, shift: time });
     }
   };
 
@@ -374,7 +994,12 @@ export function AppProvider({ children }) {
 
   const handleCancelGerenciaSelection = () => {
     setSelectedFreelancersByDay((prev) => {
-      const next = { ...prev, [selectedGerenciaDay]: [] };
+      const current = prev[selectedGerenciaDay] || [];
+      const remaining = current.filter((id) => {
+        const f = freelancersList.find((p) => p.id === id);
+        return f && f.sector !== selectedSector;
+      });
+      const next = { ...prev, [selectedGerenciaDay]: remaining };
       persistDraft(next);
       return next;
     });
@@ -382,9 +1007,27 @@ export function AppProvider({ children }) {
   };
 
   const handleSendToRH = async () => {
-    const currentDayObj = GERENCIA_DAYS.find((d) => d.id === selectedGerenciaDay);
-    const codes = selectedFreelancersByDay[selectedGerenciaDay] || [];
+    const currentDayObj = (weekDays?.length ? weekDays : GERENCIA_DAYS).find((d) => d.id === selectedGerenciaDay);
+    if (currentDayObj?.isPast) {
+      triggerToast('Não é possível enviar escala de um dia que já passou.', 'err');
+      return;
+    }
+    const codes = (selectedFreelancersByDay[selectedGerenciaDay] || []).filter((id) => {
+      const f = freelancersList.find((p) => p.id === id);
+      return f?.sector === selectedSector;
+    });
+    if (!codes.length) {
+      triggerToast('Selecione ao menos um profissional antes de enviar ao RH.', 'err');
+      return;
+    }
+    const missingUuid = codes.filter((c) => !uuidByCode?.[c]);
+    if (missingUuid.length) {
+      triggerToast('Não foi possível identificar um dos profissionais. Atualize a página e tente de novo.', 'err');
+      return;
+    }
     try {
+      // Evita corrida: rascunho vazio sobrescrever o envio
+      persistDraft._pending = null;
       await api.sendToRH({
         hotelId: account?.hotelId,
         sector: selectedSector,
@@ -393,8 +1036,13 @@ export function AppProvider({ children }) {
         professionalCodes: codes,
         uuidByCode,
         createdBy: account?.id,
+        shift: getShiftForDay(selectedGerenciaDay, selectedSector),
       });
-      setSentDays((prev) => ({ ...prev, [selectedGerenciaDay]: true }));
+      setRequestStatusByDay((prev) => ({ ...prev, [selectedGerenciaDay]: 'requested' }));
+      setSentBaselineByDay((prev) => ({
+        ...prev,
+        [`${selectedGerenciaDay}:${selectedSector}`]: [...codes].sort().join('|'),
+      }));
       setReturnedByDay((prev) => {
         if (!prev[selectedGerenciaDay]) return prev;
         const next = { ...prev };
@@ -403,7 +1051,7 @@ export function AppProvider({ children }) {
       });
       triggerToast(`Escala de ${currentDayObj ? currentDayObj.fullDay : 'hoje'} enviada com sucesso para o RH!`);
     } catch (err) {
-      triggerToast(err.message);
+      triggerToast(err.message, 'err');
     }
   };
 
@@ -431,13 +1079,67 @@ export function AppProvider({ children }) {
     const inv = freelancerInvites.find((i) => i.id === id);
     const n = inv?.days?.length || 1;
     setFreelancerInvites((prev) => prev.map((i) => (i.id === id ? { ...i, status: 'accepted' } : i)));
-    try { await api.setInviteStatus(id, 'accepted'); } catch (err) { triggerToast(err.message); }
+    try {
+      await api.setInviteStatus(id, 'accepted');
+      // Atualiza status local dos dias cobertos
+      const dayIds = (inv?.days || []).map((d) => d.id || d).filter(Boolean);
+      if (dayIds.length) {
+        setRequestStatusByDay((prev) => {
+          const next = { ...prev };
+          dayIds.forEach((dayId) => {
+            if (typeof dayId === 'string' && dayId.length <= 5) next[dayId] = 'confirmed';
+          });
+          return next;
+        });
+        setInvitedByDay((prev) => {
+          const next = { ...prev };
+          dayIds.forEach((dayId) => {
+            if (typeof dayId !== 'string' || dayId.length > 5) return;
+            const list = (next[dayId] || []).map((e) => {
+              const code = typeof e === 'string' ? e : e.code;
+              if (code !== inv?.professionalId && code !== account?.professionalCode) return e;
+              return { code, time: typeof e === 'string' ? '' : (e.time || inv?.time || ''), status: 'accepted' };
+            });
+            next[dayId] = list;
+          });
+          return next;
+        });
+      }
+    } catch (err) {
+      triggerToast(err.message, 'err');
+    }
     triggerToast(n > 1 ? `${n} turnos aceitos — entraram na sua agenda.` : 'Vaga aceita! O turno entrou na sua agenda.');
   };
 
   const handleDeclineInvite = async (id) => {
+    const inv = freelancerInvites.find((i) => i.id === id);
     setFreelancerInvites((prev) => prev.map((i) => (i.id === id ? { ...i, status: 'declined' } : i)));
-    try { await api.setInviteStatus(id, 'declined'); } catch (err) { triggerToast(err.message); }
+    try {
+      await api.setInviteStatus(id, 'declined');
+      const dayIds = (inv?.days || []).map((d) => d.id || d).filter(Boolean);
+      if (dayIds.length) {
+        setInvitedByDay((prev) => {
+          const next = { ...prev };
+          dayIds.forEach((dayId) => {
+            if (typeof dayId !== 'string' || dayId.length > 5) return;
+            const list = (next[dayId] || []).map((e) => {
+              const code = typeof e === 'string' ? e : e.code;
+              if (code !== inv?.professionalId && code !== account?.professionalCode) return e;
+              return { code, time: typeof e === 'string' ? '' : (e.time || inv?.time || ''), status: 'declined' };
+            });
+            // se não estava na lista, adiciona
+            const code = inv?.professionalId || account?.professionalCode;
+            if (code && !list.some((e) => (typeof e === 'string' ? e : e.code) === code)) {
+              list.push({ code, time: inv?.time || '', status: 'declined' });
+            }
+            next[dayId] = list;
+          });
+          return next;
+        });
+      }
+    } catch (err) {
+      triggerToast(err.message, 'err');
+    }
     triggerToast('Convite recusado. O RH será notificado para buscar substituto.');
   };
 
@@ -506,23 +1208,112 @@ export function AppProvider({ children }) {
   };
 
   const saveSettings = async () => {
-    if (!account) return;
-    await api.saveProfile(account.id, {
-      name: onboardingData.name,
-      phone: onboardingData.phone,
-      photoUrl: onboardingData.photoUrl,
-      department: onboardingData.department,
-      primaryRole: onboardingData.primaryRole,
-      city: onboardingData.city,
-      hotelOrRole: onboardingData.hotelOrRole,
-      settings: {
+    if (!account) {
+      triggerToast('Faça login novamente para salvar.', 'err');
+      return;
+    }
+    if (savingSettings) return;
+    setSavingSettings(true);
+    const role = account.role || selectedProfile;
+    const linkedHotelName = hotel?.name || onboardingData.hotelOrRole || '';
+    const hotelCode = hotel?.code || techSettings.hotelCode || account.settings?.hotelCode || account.hotelCode || '';
+    const hotelCnpj = hotel?.cnpj || techSettings.hotelCnpj || account.settings?.hotelCnpj || account.hotelCnpj || '';
+    try {
+      const nextSettings = {
+        ...(account.settings || {}),
         ...techSettings,
+        timeoutMinutes: Number(techSettings.timeoutMinutes) || 30,
+        inviteTimeoutHours: Math.max(1, Math.round((Number(techSettings.timeoutMinutes) || 30) / 60)),
+        peoplePerStaff: Math.max(1, Number(techSettings.peoplePerStaff) || 25),
+        minStaff: Math.max(1, Number(techSettings.minStaff) || 6),
         whatsappNotifications: onboardingData.whatsappNotifications,
         emergencyAlerts: onboardingData.emergencyAlerts,
-      },
-    });
-    setAccount((prev) => prev ? { ...prev, name: onboardingData.name, photoUrl: onboardingData.photoUrl } : prev);
-    triggerToast('Configurações salvas.');
+        alertPeak: techSettings.alertPeak !== false,
+        alertConfirmations: techSettings.alertConfirmations !== false,
+        hotelCode: hotelCode || undefined,
+        hotelCnpj: hotelCnpj || undefined,
+        connectedEstablishments: Array.isArray(techSettings.connectedEstablishments)
+          ? techSettings.connectedEstablishments
+          : [],
+      };
+
+      await api.saveProfile(account.id, {
+        name: onboardingData.name,
+        phone: onboardingData.phone,
+        photoUrl: onboardingData.photoUrl,
+        department: onboardingData.department,
+        primaryRole: onboardingData.primaryRole,
+        city: onboardingData.city,
+        // Gerência/RH: nome do vínculo vem do hotel; freela pode editar livremente
+        hotelOrRole: (role === 'gerencia' || role === 'rh')
+          ? (linkedHotelName || onboardingData.hotelOrRole)
+          : onboardingData.hotelOrRole,
+        settings: nextSettings,
+      });
+      setAccount((prev) => prev ? {
+        ...prev,
+        name: onboardingData.name,
+        phone: onboardingData.phone,
+        photoUrl: onboardingData.photoUrl,
+        primaryRole: onboardingData.primaryRole,
+        city: onboardingData.city,
+        department: onboardingData.department,
+        hotelOrRole: (role === 'gerencia' || role === 'rh')
+          ? (linkedHotelName || onboardingData.hotelOrRole)
+          : onboardingData.hotelOrRole,
+        hotelCode,
+        hotelCnpj,
+        settings: nextSettings,
+      } : prev);
+      setTechSettings((prev) => ({ ...prev, ...nextSettings }));
+      if (role === 'gerencia' || role === 'rh') {
+        setOnboardingData((prev) => ({
+          ...prev,
+          hotelOrRole: linkedHotelName || prev.hotelOrRole,
+        }));
+      }
+
+      let opsWarning = null;
+      if (account.hotelId && (role === 'rh' || role === 'gerencia')) {
+        try {
+          const normalizedGuests = {};
+          const nextByIso = { ...occupancyByIso };
+          for (const day of weekDays) {
+            const raw = guestCountByDay[day.id];
+            const n = raw === '' || raw == null ? 0 : Math.max(0, parseInt(raw, 10) || 0);
+            normalizedGuests[day.id] = n;
+            if (day.iso) nextByIso[day.iso] = n;
+            await api.saveOccupancy(account.hotelId, day.id, n, day.iso);
+          }
+          setGuestCountByDay((prev) => ({ ...prev, ...normalizedGuests }));
+          setOccupancyByIso(nextByIso);
+
+          // Diárias: só RH (Gerência não sobrescreve a tabela oficial)
+          if (role === 'rh') {
+            const normalizedRates = (dailyRates.length ? dailyRates : DAILY_RATES).map((row) => ({
+              ...row,
+              week: row.week === '' || row.week == null ? 0 : Number(row.week) || 0,
+              weekend: row.weekend === '' || row.weekend == null ? 0 : Number(row.weekend) || 0,
+              holiday: row.holiday === '' || row.holiday == null ? 0 : Number(row.holiday) || 0,
+            }));
+            setDailyRates(normalizedRates);
+            await api.saveRatesBatch(account.hotelId, normalizedRates);
+          }
+        } catch (opsErr) {
+          opsWarning = opsErr.message || 'Não foi possível gravar ocupação ou diárias.';
+        }
+      }
+
+      if (opsWarning) {
+        triggerToast('Alteração salva, mas parte dos dados operacionais ficou pendente. Tente de novo.', 'err');
+      } else {
+        triggerToast('Alteração salva.', 'ok');
+      }
+    } catch (err) {
+      triggerToast(err.message || 'Não foi possível salvar as configurações.', 'err');
+    } finally {
+      setSavingSettings(false);
+    }
   };
 
   const goHome = () => {
@@ -538,23 +1329,49 @@ export function AppProvider({ children }) {
       ? `Freelancer · ${onboardingData.primaryRole || 'Garçom'}`
       : selectedProfile === 'rh'
         ? (onboardingData.department || 'RH / Controladoria')
-        : (onboardingData.department || 'Maître');
+        : (onboardingData.department || 'Gerência Operacional');
     return { initials: initialsFrom(name), name, role: roleLabel };
   }, [selectedProfile, onboardingData, account]);
 
   const handleApproveAndSend = async () => {
-    setActiveRequest((prev) => ({ ...prev, status: 'ENVIADA' }));
     const sectorMeta = GERENCIA_SECTORS.find((s) => s.label === activeRequest.department)
       || GERENCIA_SECTORS.find((s) => s.id === selectedSector)
       || GERENCIA_SECTORS[0];
+    const dayList = weekDays?.length ? weekDays : GERENCIA_DAYS;
+    const alreadyInvited = new Set(
+      (invitedByDay[rhDay] || []).map((e) => (typeof e === 'string' ? e : e.code)),
+    );
+    const fromDay = selectedFreelancersByDay[rhDay] || [];
+    const picked = [...new Set((selectedIds.length ? selectedIds : fromDay).filter(Boolean))];
+    // Só envia quem ainda não foi convocado (permite chamar extras depois)
+    const uniqueCodes = picked.filter((c) => !alreadyInvited.has(c));
+
+    if (!uniqueCodes.length) {
+      triggerToast(
+        alreadyInvited.size
+          ? 'Ninguém novo para enviar. Marque alguém em Equipe ou em Fora da escala.'
+          : 'Selecione ao menos uma pessoa na equipe para enviar o convite.',
+        'err',
+      );
+      return;
+    }
+
     const dayIdsByCode = {};
-    selectedIds.forEach((fid) => {
-      let dayIds = GERENCIA_DAYS.map((d) => d.id).filter((id) => (selectedFreelancersByDay[id] || []).includes(fid));
+    uniqueCodes.forEach((fid) => {
+      let dayIds = dayList.map((d) => d.id).filter((id) => (selectedFreelancersByDay[id] || []).includes(fid));
       if (!dayIds.includes(rhDay)) dayIds = [...dayIds, rhDay];
       if (!dayIds.length) dayIds = [rhDay];
-      dayIdsByCode[fid] = GERENCIA_DAYS.map((d) => d.id).filter((id) => dayIds.includes(id));
+      dayIdsByCode[fid] = dayIds;
     });
+
+    const missingUuid = uniqueCodes.filter((c) => !uuidByCode?.[c]);
+    if (missingUuid.length) {
+      triggerToast('Não foi possível identificar um dos profissionais. Atualize a página e tente de novo.', 'err');
+      return;
+    }
+
     try {
+      const shift = getShiftForDay(rhDay, sectorMeta.id);
       const packages = await api.approveAndSend({
         hotelId: account?.hotelId,
         sector: sectorMeta.id,
@@ -562,17 +1379,57 @@ export function AppProvider({ children }) {
         uuidByCode,
         rates: dailyRates,
         hotelName: hotel?.name,
+        shift,
+        weekDays: dayList,
       });
-      if (packages?.length) {
-        setFreelancerInvites((prev) => [...packages, ...prev]);
+      if (!packages?.length) {
+        triggerToast('Nenhum convite foi criado. Confira se o freelancer está na base do estabelecimento.', 'err');
+        return;
       }
+      setFreelancerInvites((prev) => [...packages, ...prev]);
+      setRequestStatusByDay((prev) => {
+        const next = { ...prev };
+        Object.values(dayIdsByCode).flat().forEach((id) => { next[id] = 'sent'; });
+        return next;
+      });
+      setSentDays((prev) => {
+        const next = { ...prev };
+        Object.values(dayIdsByCode).flat().forEach((id) => { next[id] = true; });
+        return next;
+      });
+      setInvitedByDay((prev) => {
+        const next = { ...prev };
+        const shiftLabel = shift || '';
+        Object.entries(dayIdsByCode).forEach(([code, dayIds]) => {
+          dayIds.forEach((dayId) => {
+            const list = next[dayId] ? [...next[dayId]] : [];
+            const exists = list.some((e) => {
+              const c = typeof e === 'string' ? e : e.code;
+              const t = typeof e === 'string' ? '' : (e.time || '');
+              return c === code && (!t || !shiftLabel || t === shiftLabel);
+            });
+            if (!exists) list.push({ code, time: shiftLabel });
+            else {
+              const idx = list.findIndex((e) => (typeof e === 'string' ? e : e.code) === code);
+              if (idx >= 0 && shiftLabel) {
+                list[idx] = { code, time: shiftLabel };
+              }
+            }
+            next[dayId] = list;
+          });
+        });
+        return next;
+      });
+      // Remove da seleção "pendente" quem já foi enviado
+      setSelectedIds((prev) => prev.filter((id) => !uniqueCodes.includes(id)));
+      setActiveRequest((prev) => ({ ...prev, status: 'ENVIADA' }));
       const multi = Object.values(dayIdsByCode).some((d) => d.length > 1);
       triggerToast(multi
-        ? 'Aprovado. Convites em pacote enviados no WhatsApp (todos os dias juntos).'
-        : 'Solicitação aprovada! Convites enviados via WhatsApp.');
+        ? 'Aprovado. Convites em pacote enviados aos freelancers.'
+        : 'Solicitação aprovada! Convites enviados aos freelancers.', 'ok', { sound: true });
       setCurrentView('main_kanban');
     } catch (err) {
-      triggerToast(err.message);
+      triggerToast(err.message, 'err');
     }
   };
 
@@ -584,22 +1441,28 @@ export function AppProvider({ children }) {
   const confirmReturnToMaitre = async () => {
     const reason = returnReason.trim();
     if (!reason) {
-      triggerToast('Informe o motivo da devolução');
+      triggerToast('Informe o motivo da devolução.', 'err');
       return;
     }
     const dayId = rhDay || 'sex';
+    const dayObj = weekDays.find((d) => d.id === dayId);
+    const sectorMeta = GERENCIA_SECTORS.find((s) => s.label === activeRequest.department)
+      || GERENCIA_SECTORS.find((s) => s.id === selectedSector)
+      || GERENCIA_SECTORS[0];
     try {
       await api.returnRequest({
         hotelId: account?.hotelId,
-        sector: selectedSector,
+        sector: sectorMeta.id,
         dayId,
+        dayIso: dayObj?.iso,
         reason,
         returnedBy: account?.id,
       });
       setReturnedByDay((prev) => ({
         ...prev,
-        [dayId]: { reason, author: account?.name || 'RH', at: 'Agora', department: activeRequest.department },
+        [dayId]: { reason, author: account?.name || 'RH', at: 'Agora', department: activeRequest.department || sectorMeta.label },
       }));
+      setRequestStatusByDay((prev) => ({ ...prev, [dayId]: 'returned' }));
       setSentDays((prev) => {
         const next = { ...prev };
         delete next[dayId];
@@ -608,10 +1471,10 @@ export function AppProvider({ children }) {
       setActiveRequest((prev) => ({ ...prev, status: 'DEVOLVIDA' }));
       setReturnModalOpen(false);
       setReturnReason('');
-      triggerToast('Devolvida ao maître com o motivo');
+      triggerToast('Escala devolvida à Gerência com a observação.');
       setCurrentView('main_kanban');
     } catch (err) {
-      triggerToast(err.message);
+      triggerToast(err.message, 'err');
     }
   };
 
@@ -635,7 +1498,7 @@ export function AppProvider({ children }) {
         present: true,
         byProfileId: account?.id,
       });
-    } catch (err) { triggerToast(err.message); }
+    } catch (err) { triggerToast(err.message, 'err'); }
     triggerToast(`${f.name} marcado como presente`);
   };
 
@@ -650,7 +1513,7 @@ export function AppProvider({ children }) {
         present: false,
         byProfileId: account?.id,
       });
-    } catch (err) { triggerToast(err.message); }
+    } catch (err) { triggerToast(err.message, 'err'); }
     triggerToast(`Presença de ${f.name} desfeita`);
   };
 
@@ -663,9 +1526,87 @@ export function AppProvider({ children }) {
         setOnboardingData((prev) => ({ ...prev, photoUrl: url || value }));
         setAccount((prev) => (prev ? { ...prev, photoUrl: url || value } : prev));
       } catch (err) {
-        triggerToast(err.message);
+        triggerToast(err.message, 'err');
       }
     }
+  };
+
+  const linkEstablishmentByCode = async (rawCode) => {
+    if (!account) throw new Error('Faça login novamente.');
+    const result = await api.linkToHotelByCode(rawCode);
+    const nextAccount = result.account || {
+      ...account,
+      hotelId: result.hotelId || result.hotel?.id,
+      hotelOrRole: result.hotel?.name || account.hotelOrRole,
+      hotelCode: result.hotel?.code,
+      professionalCode: result.professionalCode || account.professionalCode,
+      settings: {
+        ...(account.settings || {}),
+        hotelCode: result.hotel?.code,
+        connectedEstablishments: result.connectedEstablishments || [],
+      },
+    };
+    setAccount(nextAccount);
+    setOnboardingData((prev) => ({
+      ...prev,
+      hotelOrRole: result.hotel?.name || prev.hotelOrRole,
+    }));
+    setTechSettings((prev) => ({
+      ...prev,
+      hotelCode: result.hotel?.code || prev.hotelCode,
+      connectedEstablishments: result.connectedEstablishments || [],
+    }));
+    if (result.hotel) {
+      setHotel({
+        id: result.hotel.id,
+        name: result.hotel.name,
+        city: result.hotel.city || '',
+        code: result.hotel.code,
+        cnpj: result.hotel.cnpj || '',
+      });
+    }
+    try {
+      const data = await api.loadHotelData(nextAccount);
+      applyHotelData(data);
+    } catch (_) { /* lista pode atualizar no próximo login */ }
+    return result;
+  };
+
+  const unlinkEstablishmentById = async (hotelId) => {
+    if (!account) throw new Error('Faça login novamente.');
+    const result = await api.unlinkFromHotel(hotelId);
+    const nextAccount = result.account || {
+      ...account,
+      hotelId: result.hotelId,
+      hotelOrRole: result.hotelName || '',
+      settings: {
+        ...(account.settings || {}),
+        connectedEstablishments: result.connectedEstablishments || [],
+      },
+    };
+    setAccount(nextAccount);
+    setOnboardingData((prev) => ({
+      ...prev,
+      hotelOrRole: result.hotelName || '',
+    }));
+    setTechSettings((prev) => ({
+      ...prev,
+      connectedEstablishments: result.connectedEstablishments || [],
+      hotelCode: result.connectedEstablishments?.[0]?.code || '',
+    }));
+    const primary = result.connectedEstablishments?.[0];
+    setHotel((prev) => ({
+      id: result.hotelId || null,
+      name: result.hotelName || primary?.name || '',
+      city: prev.city || '',
+      code: primary?.code || '',
+      cnpj: prev.cnpj || '',
+    }));
+    try {
+      const data = await api.loadHotelData(nextAccount);
+      applyHotelData(data);
+    } catch (_) { /* ok */ }
+    return result;
   };
 
   const value = {
@@ -684,34 +1625,43 @@ export function AppProvider({ children }) {
     registerPassword, setRegisterPassword,
     registerConfirmPassword, setRegisterConfirmPassword,
     authError, setAuthError, busy,
-    account, hotel,
+    account, hotel, joinInvite,
     onboardingStep, setOnboardingStep,
     selectedProfile, setSelectedProfile,
     onboardingData, setOnboardingData,
     activeRequest, setActiveRequest,
-    freelancersList, selectedIds, setSelectedIds, activeTab, setActiveTab,
+    freelancersList, managementTeam, selectedIds, setSelectedIds, activeTab, setActiveTab,
     toast, navOpen, setNavOpen, triggerToast,
+    inboxBadge, clearInboxBadge,
+    notifications, pushNotification, markNotificationRead, markAllNotificationsRead,
+    notifPanelTick, requestOpenNotifPanel,
     selectedGerenciaDay, setSelectedGerenciaDay,
     selectedSector, setSelectedSector,
+    shiftByDay, getShiftForDay, setShiftForDay,
     gerenciaSearchQuery, setGerenciaSearchQuery,
     freelancerBaseQuery, setFreelancerBaseQuery,
     freelancerBaseSector, setFreelancerBaseSector,
     dayPickerFor, setDayPickerFor, dayPickerSelected, setDayPickerSelected,
     returnModalOpen, setReturnModalOpen, returnReason, setReturnReason,
     returnedByDay, selectedFreelancersByDay, setSelectedFreelancersByDay,
-    sentDays, checkedInIds, rhDay, setRhDay,
+    sentDays, requestStatusByDay, sentBaselineByDay, invitedByDay, checkedInIds, rhDay, setRhDay,
     dailyRates, guestCountByDay, techSettings, setTechSettings,
     freelancerInvites, freelancerAgenda, pendingInviteCount, activeUser,
+    weekDays, weekOffset, shiftWeek, weekLabel: formatWeekRangeLabel(weekDays),
+    pendingApprovalsCount: Object.values(requestStatusByDay || {}).filter(
+      (s) => s === 'requested',
+    ).length,
     handleLoginSubmit, signInWith, handleRegisterSubmit, handleFinishOnboarding, handleLogout,
-    updateGuestCount, updateDailyRate,
+    updateGuestCount, persistOccupancyDay, updateDailyRate,
     toggleGerenciaFreelancer, handleCancelGerenciaSelection, handleSendToRH,
     handleAcceptInvite, handleDeclineInvite, saveAvailability,
     openDayPicker, toggleDayPickerDay, confirmDayPicker,
     toggleAvailableDay, toggleAvailableTime,
     goHome, handleApproveAndSend, handleReturnToMaitre, confirmReturnToMaitre,
     toggleSelectAll, toggleSelectOne, confirmPresence, undoPresence,
-    saveSettings, changeAccountField,
-    GERENCIA_DAYS, GERENCIA_SECTORS, SECTOR_SHIFT, PROFILE_HOME,
+    saveSettings, savingSettings, changeAccountField,
+    linkEstablishmentByCode, unlinkEstablishmentById,
+    GERENCIA_DAYS: weekDays, GERENCIA_SECTORS, SECTOR_SHIFT, SHIFT_OPTIONS, PROFILE_HOME,
     formatInviteDays, inviteDateSummary, dailyRateFor, rateKindForDay,
   };
 

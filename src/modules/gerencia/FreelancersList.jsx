@@ -10,6 +10,7 @@ import {
   GERENCIA_DAYS, GERENCIA_SECTORS, SECTOR_SHIFT, RATE_KIND_LABEL,
   staffNeeded, formatBRL, dailyRateFor, rateKindForDay,
 } from '../../lib/constants';
+import Avatar from '../../components/Avatar';
 
 export default function FreelancersList() {
   const {
@@ -55,7 +56,7 @@ const q = freelancerBaseQuery.trim().toLowerCase();
                     {showRates ? 'Base de freelancers' : 'Freelancers'}
                   </h1>
                   <p style={{ fontSize: '13px', color: '#64748B', margin: '4px 0 0' }}>
-                    {list.length} profissionais · Hotel Atlântico
+                    {list.length} profissionais{hotel?.name ? ` · ${hotel.name}` : ''}
                   </p>
                 </div>
 
@@ -143,7 +144,7 @@ const q = freelancerBaseQuery.trim().toLowerCase();
                         <tr key={f.id} style={{ borderBottom: '1px solid #F1F5F9' }}>
                           <td style={{ padding: '10px 16px' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                              <img src={f.avatar} alt="" style={{ width: '28px', height: '28px', borderRadius: '50%', objectFit: 'cover' }} />
+                              <Avatar src={f.avatar} name={f.name} size={28} />
                               <div>
                                 <div style={{ fontWeight: 500, color: '#0F172A' }}>{f.name}</div>
                                 <div style={{ fontSize: '11px', color: '#16A34A' }}>{f.status || 'Disponível'}</div>

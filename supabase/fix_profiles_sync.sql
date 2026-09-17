@@ -44,7 +44,7 @@ begin
   )
   values (
     new.id,
-    'a0e1b2c3-d4e5-4f67-8899-000000000001',
+    null,
     v_role,
     coalesce(nullif(new.raw_user_meta_data->>'name', ''), split_part(new.email, '@', 1)),
     coalesce(new.raw_user_meta_data->>'phone', ''),
@@ -82,7 +82,7 @@ insert into public.profiles (
 )
 select
   u.id,
-  'a0e1b2c3-d4e5-4f67-8899-000000000001',
+  null,
   case
     when coalesce(u.raw_user_meta_data->>'role', 'freelancer') in ('gerencia', 'rh', 'freelancer')
       then coalesce(u.raw_user_meta_data->>'role', 'freelancer')

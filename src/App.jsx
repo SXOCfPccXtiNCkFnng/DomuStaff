@@ -1,4 +1,4 @@
-﻿import React from 'react';
+import React from 'react';
 import { AppProvider, useApp } from './store/AppContext';
 import AppShell from './layout/AppShell';
 import AuthView from './modules/auth/AuthView';
@@ -12,7 +12,7 @@ import Relatorios from './modules/rh/Relatorios';
 import Aprovacao from './modules/rh/Aprovacao';
 import FreelancerDashboard from './modules/freelancer/FreelancerDashboard';
 import SettingsView from './modules/settings/SettingsView';
-import { GERENCIA_DAYS, RATE_KIND_LABEL, rateKindForDay } from './lib/constants';
+import { RATE_KIND_LABEL, rateKindForDay } from './lib/constants';
 
 function Router() {
   const {
@@ -21,7 +21,8 @@ function Router() {
     onboardingData, toggleAvailableDay, toggleAvailableTime, setOnboardingData,
     saveAvailability, activeUser, selectedProfile, dailyRates, updateDailyRate,
     guestCountByDay, updateGuestCount, changeAccountField, techSettings, setTechSettings,
-    saveSettings, selectedSector, hotel, triggerToast, freelancersList,
+    saveSettings, savingSettings, selectedSector, hotel, triggerToast, freelancersList, managementTeam, GERENCIA_DAYS,
+    linkEstablishmentByCode, unlinkEstablishmentById, requestOpenNotifPanel,
   } = useApp();
 
   if (bootstrapping) {
@@ -35,7 +36,7 @@ function Router() {
   if (currentView === 'login' || currentView === 'register') return <AuthView />;
   if (currentView === 'onboarding') return <OnboardingView />;
 
-  return (
+              return (
     <AppShell>
       {currentView.startsWith('freelancer_') && (
         <FreelancerDashboard
@@ -52,6 +53,7 @@ function Router() {
           onSelectWeekends={() => setOnboardingData((prev) => ({ ...prev, availableDays: ['Sáb', 'Dom'] }))}
           onSaveAvailability={saveAvailability}
           userName={activeUser.name}
+          onOpenNotifications={requestOpenNotifPanel}
         />
       )}
       {currentView === 'configuracoes' && (
@@ -70,7 +72,8 @@ function Router() {
           userRole={activeUser.role}
           defaultSector={selectedSector}
           hotel={hotel}
-          freelancersCount={freelancersList?.length || 14}
+          freelancersCount={freelancersList?.length || 0}
+          managementTeam={managementTeam || []}
           triggerToast={triggerToast}
           tech={{
             ...techSettings,
@@ -85,6 +88,9 @@ function Router() {
             setTechSettings((prev) => ({ ...prev, [key]: value }));
           }}
           onSave={saveSettings}
+          saving={savingSettings}
+          onLinkEstablishment={linkEstablishmentByCode}
+          onUnlinkEstablishment={unlinkEstablishmentById}
         />
       )}
       {currentView === 'gerencia_montar_escala' && <MontarEscala />}
@@ -99,7 +105,7 @@ function Router() {
 }
 
 export default function App() {
-  return (
+                          return (
     <AppProvider>
       <Router />
     </AppProvider>

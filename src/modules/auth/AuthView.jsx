@@ -14,11 +14,20 @@ export default function AuthView() {
     registerPassword, setRegisterPassword,
     registerConfirmPassword, setRegisterConfirmPassword,
     handleLoginSubmit, signInWith, handleRegisterSubmit, authError, setAuthError, busy,
+    joinInvite,
   } = useApp();
 
-  const [authMode, setAuthMode] = useState(currentView === 'register' ? 'register' : 'login');
+  const [authMode, setAuthMode] = useState(currentView === 'register' || joinInvite ? 'register' : 'login');
   const isLogin = authMode === 'login';
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+
+  const inviteRoleLabel = joinInvite?.role === 'gerencia'
+    ? 'Gerência'
+    : joinInvite?.role === 'rh'
+      ? 'RH'
+      : joinInvite?.role === 'freelancer'
+        ? 'Freelancer'
+        : null;
 
   const switchMode = (mode) => {
     if (setAuthError) setAuthError('');
@@ -52,14 +61,18 @@ export default function AuthView() {
     if (!registerPassword) return { label: '', color: '#94A3B8', width: '0%' };
     if (passwordScore <= 2) return { label: 'Fraca', color: '#EF4444', width: '33%' };
     if (passwordScore === 3) return { label: 'Média', color: '#F59E0B', width: '66%' };
-    return { label: 'Forte & Segura', color: '#10B981', width: '100%' };
+    return { label: 'Forte e Segura', color: '#10B981', width: '100%' };
   };
 
   const strength = getPasswordStrengthLabel();
 
   return (
     <div style={{ display: 'flex', minHeight: '100vh', width: '100%', background: '#F8FAFC', fontFamily: "'IBM Plex Sans', 'Segoe UI', sans-serif" }}>
-      {toast && <div className="toast">{toast}</div>}
+      {toast && (
+        <div className={`toast${toast.type === 'err' ? ' toast-err' : toast.type === 'ok' ? ' toast-ok' : ''}`}>
+          {typeof toast === 'string' ? toast : toast.msg}
+        </div>
+      )}
 
       {/* Left Showcase Banner */}
       <div className="auth-left-showcase" style={{
@@ -77,7 +90,7 @@ export default function AuthView() {
             background: 'rgba(59, 130, 246, 0.12)', border: '1px solid rgba(59, 130, 246, 0.3)',
             padding: '4px 10px', borderRadius: '100px', letterSpacing: '0.04em', textTransform: 'uppercase', marginBottom: '18px'
           }}>
-            Gestão & Escala Inteligente
+            Gestão e Escala Inteligente
           </span>
           <h1 style={{ fontSize: '38px', fontWeight: 600, color: '#FFFFFF', lineHeight: 1.15, letterSpacing: '-0.8px', marginBottom: '16px' }}>
             A plataforma oficial para escalas e diárias.
@@ -159,6 +172,23 @@ export default function AuthView() {
                   : 'Preencha seus dados para criar sua conta no Domu Staff.'}
               </p>
             </div>
+
+            {joinInvite && inviteRoleLabel && (
+              <div style={{
+                background: '#F0FDF4',
+                border: '1px solid #BBF7D0',
+                color: '#166534',
+                fontSize: '13px',
+                padding: '10px 12px',
+                marginBottom: '16px',
+                borderRadius: '4px',
+                lineHeight: 1.45,
+              }}>
+                Convite de <strong>{inviteRoleLabel}</strong>
+                {joinInvite.code ? <> para o estabelecimento <strong>{joinInvite.code}</strong></> : null}.
+                Crie sua conta para continuar.
+              </div>
+            )}
 
             {authError && (
               <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', color: '#991B1B', fontSize: '13px', padding: '10px 12px', marginBottom: '16px', borderRadius: '4px', display: 'flex', alignItems: 'center', gap: '8px' }}>

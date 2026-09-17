@@ -10,6 +10,7 @@ import {
   GERENCIA_DAYS, GERENCIA_SECTORS, SECTOR_SHIFT, RATE_KIND_LABEL,
   staffNeeded, formatBRL, dailyRateFor, rateKindForDay,
 } from '../../lib/constants';
+import Avatar from '../../components/Avatar';
 
 export default function TurnoHoje() {
   const {
@@ -70,7 +71,7 @@ const dayIds = selectedFreelancersByDay.sex?.length
                       Turno de hoje
                     </h1>
                     <p style={{ fontSize: '13px', color: '#64748B', margin: '4px 0 0' }}>
-                      Você confirma a presença no salão · Sexta, 19/09 · 15h–23h · {guests} hóspedes
+                      Você confirma a presença no salão · Sexta, 19/09 · 15h–23h · {guests} pessoas
                     </p>
                   </div>
                   <span
@@ -113,7 +114,7 @@ const dayIds = selectedFreelancersByDay.sex?.length
                       }}
                     >
                       <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
-                        <img src={f.avatar} alt="" style={{ width: '32px', height: '32px', borderRadius: '50%', objectFit: 'cover' }} />
+                        <Avatar src={f.avatar} name={f.name} size={32} />
                         <div style={{ minWidth: 0 }}>
                           <div style={{ fontSize: '13.5px', fontWeight: 500, color: '#0F172A' }}>{f.name}</div>
                           <div style={{ fontSize: '12px', color: '#64748B' }}>{f.role}</div>

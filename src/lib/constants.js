@@ -3,7 +3,88 @@ import {
 } from 'lucide-react';
 
 export const HOTEL_ID = 'a0e1b2c3-d4e5-4f67-8899-000000000001';
-export const WEEK_START = '2025-09-15';
+
+const DAY_META = [
+  { id: 'seg', label: 'Seg', full: 'segunda' },
+  { id: 'ter', label: 'Ter', full: 'terça' },
+  { id: 'qua', label: 'Qua', full: 'quarta' },
+  { id: 'qui', label: 'Qui', full: 'quinta' },
+  { id: 'sex', label: 'Sex', full: 'sexta' },
+  { id: 'sab', label: 'Sáb', full: 'sábado' },
+  { id: 'dom', label: 'Dom', full: 'domingo' },
+];
+
+function toLocalIso(d) {
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function todayLocalIso() {
+  return toLocalIso(new Date());
+}
+
+/** Segunda-feira da semana da data (semana começa na segunda). */
+export function getMonday(date = new Date()) {
+  const d = new Date(date);
+  d.setHours(12, 0, 0, 0);
+  const day = d.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  d.setDate(d.getDate() + diff);
+  return d;
+}
+
+/** Semana dinâmica a partir da semana atual + offset (0 = esta semana). */
+export function buildWeekDays(weekOffset = 0) {
+  const monday = getMonday(new Date());
+  monday.setDate(monday.getDate() + weekOffset * 7);
+  const todayIso = todayLocalIso();
+
+  return DAY_META.map((meta, i) => {
+    const d = new Date(monday);
+    d.setDate(monday.getDate() + i);
+    const iso = toLocalIso(d);
+    const dd = String(d.getDate()).padStart(2, '0');
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    return {
+      id: meta.id,
+      label: meta.label,
+      date: `${dd}/${mm}`,
+      iso,
+      fullDay: `${meta.full}, ${dd}/${mm}`,
+      guests: 0,
+      recommended: '—',
+      needed: 0,
+      defaultFilled: 0,
+      isToday: iso === todayIso,
+      isPast: iso < todayIso,
+    };
+  });
+}
+
+export function formatWeekRangeLabel(days) {
+  if (!days?.length) return '';
+  const first = days[0];
+  const last = days[days.length - 1];
+  const monthNames = [
+    'janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho',
+    'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro',
+  ];
+  const y = Number(first.iso.slice(0, 4));
+  const m = monthNames[Number(first.iso.slice(5, 7)) - 1];
+  return `${first.date.split('/')[0]} – ${last.date.split('/')[0]} de ${m} de ${y}`;
+}
+
+/** Semana atual (atualizada via setGerenciaDays quando o usuário navega). */
+export let GERENCIA_DAYS = buildWeekDays(0);
+export let WEEK_START = GERENCIA_DAYS[0]?.iso || toLocalIso(getMonday());
+
+export function setGerenciaDays(days) {
+  GERENCIA_DAYS = days;
+  WEEK_START = days[0]?.iso || WEEK_START;
+  return GERENCIA_DAYS;
+}
 
 export const IDS = {
   marcos: 'a0e1b2c3-d4e5-4f67-8899-000000000002',
@@ -26,15 +107,53 @@ export const SECTOR_SHIFT = {
   cdc: '07h – 15h',
 };
 
-export const GERENCIA_DAYS = [
-  { id: 'seg', label: 'Seg', date: '15/09', iso: '2025-09-15', fullDay: 'segunda, 15/09', guests: 320, recommended: '14 – 18 pessoas', needed: 14, defaultFilled: 12 },
-  { id: 'ter', label: 'Ter', date: '16/09', iso: '2025-09-16', fullDay: 'terça, 16/09', guests: 280, recommended: '12 – 16 pessoas', needed: 12, defaultFilled: 8 },
-  { id: 'qua', label: 'Qua', date: '17/09', iso: '2025-09-17', fullDay: 'quarta, 17/09', guests: 310, recommended: '14 – 18 pessoas', needed: 14, defaultFilled: 10 },
-  { id: 'qui', label: 'Qui', date: '18/09', iso: '2025-09-18', fullDay: 'quinta, 18/09', guests: 420, recommended: '18 – 24 pessoas', needed: 16, defaultFilled: 12 },
-  { id: 'sex', label: 'Sex', date: '19/09', iso: '2025-09-19', fullDay: 'sexta, 19/09', guests: 500, recommended: '22 – 28 pessoas', needed: 14, defaultFilled: 3 },
-  { id: 'sab', label: 'Sáb', date: '20/09', iso: '2025-09-20', fullDay: 'sábado, 20/09', guests: 480, recommended: '20 – 28 pessoas', needed: 16, defaultFilled: 0 },
-  { id: 'dom', label: 'Dom', date: '21/09', iso: '2025-09-21', fullDay: 'domingo, 21/09', guests: 350, recommended: '16 – 22 pessoas', needed: 12, defaultFilled: 0 },
+/** Turnos padrão do SaaS (hotel, restaurante, eventos…). */
+export const SHIFT_OPTIONS = [
+  { id: 'manha', label: 'Manhã', time: '07h – 15h' },
+  { id: 'comercial', label: 'Comercial', time: '09h – 17h' },
+  { id: 'tarde', label: 'Tarde / Noite', time: '15h – 23h' },
+  { id: 'jantar', label: 'Jantar', time: '18h – 00h' },
+  { id: 'noturno', label: 'Noturno', time: '23h – 07h' },
 ];
+
+/** Normaliza horário para comparar (traços/espaços/h diferentes). */
+export function normalizeShiftTime(t) {
+  if (t == null || t === '' || t === '—' || t === '-') return '';
+  return String(t)
+    .replace(/[–—−]/g, '-')
+    .replace(/\s+/g, '')
+    .replace(/h/gi, 'h')
+    .trim()
+    .toLowerCase();
+}
+
+export function shiftTimesMatch(a, b) {
+  const na = normalizeShiftTime(a);
+  const nb = normalizeShiftTime(b);
+  if (!na || !nb) return false;
+  if (na === nb) return true;
+  // "15h-23h" vs "15:00-23:00"
+  const toParts = (s) => s.replace(/:/g, 'h').match(/(\d{1,2})h(\d{0,2})/g);
+  const pa = toParts(na);
+  const pb = toParts(nb);
+  if (!pa || !pb || pa.length < 2 || pb.length < 2) return false;
+  const norm = (p) => p.map((x) => {
+    const m = x.match(/(\d{1,2})h(\d*)/);
+    return `${String(Number(m[1])).padStart(2, '0')}h${(m[2] || '00').padStart(2, '0')}`;
+  }).join('-');
+  return norm(pa) === norm(pb);
+}
+
+export function shiftOptionFromTime(time) {
+  const n = normalizeShiftTime(time);
+  if (!n) return null;
+  return SHIFT_OPTIONS.find((s) => normalizeShiftTime(s.time) === n) || null;
+}
+
+export function defaultShiftForSector(sectorId) {
+  const time = SECTOR_SHIFT[sectorId] || '15h – 23h';
+  return SHIFT_OPTIONS.find((s) => s.time === time) || SHIFT_OPTIONS[2];
+}
 
 export const GERENCIA_SECTORS = [
   { id: 'restaurante', label: 'Restaurante', icon: Utensils },
@@ -154,12 +273,116 @@ export function dailyRateFor(role, kind = 'week', rates = DAILY_RATES) {
   return Number(row[kind] ?? row.week) || 0;
 }
 
-export function rateKindForDay(dayId) {
+/** Feriados nacionais fixos (MM-DD). */
+const BR_FIXED_HOLIDAYS = new Set([
+  '01-01', // Confraternização Universal
+  '04-21', // Tiradentes
+  '05-01', // Dia do Trabalho
+  '09-07', // Independência
+  '10-12', // Nossa Senhora Aparecida
+  '11-02', // Finados
+  '11-15', // Proclamação da República
+  '11-20', // Consciência Negra
+  '12-25', // Natal
+]);
+
+export function isBrazilianHoliday(iso) {
+  if (!iso || String(iso).length < 10) return false;
+  return BR_FIXED_HOLIDAYS.has(String(iso).slice(5, 10));
+}
+
+/** Aceita id ('sab') ou objeto do dia ({ id, iso }). Feriado tem prioridade sobre fim de semana. */
+export function rateKindForDay(dayOrId) {
+  if (dayOrId && typeof dayOrId === 'object') {
+    if (dayOrId.iso && isBrazilianHoliday(dayOrId.iso)) return 'holiday';
+    const id = dayOrId.id;
+    return id === 'sab' || id === 'dom' ? 'weekend' : 'week';
+  }
+  const dayId = dayOrId;
   return dayId === 'sab' || dayId === 'dom' ? 'weekend' : 'week';
 }
 
-export function staffNeeded(guests) {
-  return Math.max(6, Math.round(Number(guests || 0) / 25));
+/** Tons discretos para o mapa da semana (fim de semana / feriado). */
+export function dayMapTone(kind, { active = false, isToday = false } = {}) {
+  if (active) {
+    return {
+      background: '#EBF3FF',
+      border: '1px solid #0066FF',
+      title: '#0066FF',
+      meta: '#0066FF',
+      bar: '#0066FF',
+    };
+  }
+  if (isToday) {
+    return {
+      background: '#F0FDF4',
+      border: '1px solid #16A34A',
+      title: '#0F172A',
+      meta: '#15803D',
+      bar: '#16A34A',
+    };
+  }
+  if (kind === 'holiday') {
+    return {
+      background: '#FFF8F6',
+      border: '1px solid #F0D6CF',
+      title: '#0F172A',
+      meta: '#9A3412',
+      bar: '#E8A598',
+    };
+  }
+  if (kind === 'weekend') {
+    return {
+      background: '#FFFBF5',
+      border: '1px solid #EAD9C4',
+      title: '#0F172A',
+      meta: '#9A6B2F',
+      bar: '#D4B483',
+    };
+  }
+  return {
+    background: '#FFFFFF',
+    border: '1px solid #E2E8F0',
+    title: '#0F172A',
+    meta: '#94A3B8',
+    bar: 'transparent',
+  };
+}
+
+export function staffNeeded(guests, options = {}) {
+  const g = Number(guests || 0);
+  const per = Math.max(1, Number(options.peoplePerStaff) || 25);
+  const min = Math.max(1, Number(options.minStaff) || 6);
+  let base = g > 0
+    ? Math.max(min, Math.round(g / per) || 1)
+    : min;
+
+  if (options.autoScaleHistory && Array.isArray(options.weekGuestCounts)) {
+    const vals = options.weekGuestCounts.map(Number).filter((n) => n > 0);
+    if (vals.length) {
+      const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
+      const hist = Math.max(min, Math.round(avg / per));
+      base = Math.round((base * 0.6) + (hist * 0.4));
+    }
+  }
+
+  if (options.suggestOnHighOccupancy && g > 0) {
+    const capacityHint = Math.max(per, base * per);
+    if (g >= capacityHint * 0.85) base += 2;
+  }
+
+  return Math.max(1, base);
+}
+
+/** Opções de meta a partir das configs do estabelecimento. */
+export function staffingOptionsFromTech(tech = {}, weekGuestCounts) {
+  return {
+    peoplePerStaff: Number(tech.peoplePerStaff) || 25,
+    minStaff: Number(tech.minStaff) || 6,
+    suggestOnHighOccupancy: !!tech.suggestOnHighOccupancy,
+    autoScaleHistory: !!tech.autoScaleHistory,
+    weekGuestCounts,
+  };
 }
 
 export function dayByIso(iso) {

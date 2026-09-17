@@ -1,8 +1,9 @@
-﻿import React from 'react';
+import React, { useEffect } from 'react';
 import {
   Check, ArrowLeft, ArrowRight, Info, User, Users, ChefHat, Building2, Phone, CheckCircle2, MessageSquare
 } from 'lucide-react';
 import { useApp } from '../../store/AppContext';
+import { formatCnpj, isValidCnpj } from '../../lib/api';
 
 export default function OnboardingView() {
   const {
@@ -24,8 +25,26 @@ export default function OnboardingView() {
     handleAcceptInvite, handleDeclineInvite, saveAvailability, saveSettings,
     toggleAvailableDay, toggleAvailableTime, changeAccountField,
     updateGuestCount, updateDailyRate, techSettings, setTechSettings,
-    onboardingStep, setOnboardingStep, handleFinishOnboarding, busy,
+    onboardingStep, setOnboardingStep, handleFinishOnboarding, busy, joinInvite,
   } = useApp();
+
+  const lockedRole = joinInvite?.role || null;
+  const inviteCode = joinInvite?.code || '';
+
+  useEffect(() => {
+    if (!lockedRole) return;
+    setSelectedProfile(lockedRole);
+    setOnboardingData((prev) => ({
+      ...prev,
+      hotelMode: inviteCode ? 'join' : prev.hotelMode,
+      hotelCode: inviteCode || prev.hotelCode,
+      department: lockedRole === 'gerencia'
+        ? (prev.department || 'Gerência Operacional')
+        : lockedRole === 'rh'
+          ? (prev.department || 'RH / Controladoria')
+          : prev.department,
+    }));
+  }, [lockedRole, inviteCode]);
 
     return (
       <div style={{
@@ -123,20 +142,29 @@ export default function OnboardingView() {
                   BEM-VINDO AO DOMU STAFF
                 </div>
                 <h1 style={{ fontSize: '32px', fontWeight: 600, color: '#0F172A', letterSpacing: '-0.5px', marginBottom: '8px' }}>
-                  Qual é o seu perfil?
+                  {lockedRole === 'gerencia'
+                    ? 'Convite para Gerência'
+                    : lockedRole === 'freelancer'
+                      ? 'Convite para Freelancer'
+                      : lockedRole === 'rh'
+                        ? 'Convite para RH'
+                        : 'Qual é o seu perfil?'}
                 </h1>
                 <p style={{ fontSize: '15px', color: '#64748B' }}>
-                  Escolha como você vai usar a plataforma para personalizarmos sua experiência.
+                  {lockedRole
+                    ? (inviteCode
+                      ? `Este link vincula você ao estabelecimento ${inviteCode} como ${lockedRole === 'gerência' ? 'Gerência' : lockedRole === 'rh' ? 'RH' : 'Freelancer'}.`
+                      : 'Seu perfil veio definido pelo convite. Confirme para continuar.')
+                    : 'Escolha como você vai usar a plataforma para personalizarmos sua experiência.'}
                 </p>
               </div>
 
-              {/* 3 Profile Cards Grid */}
-              <div className="onboarding-profile-grid">
-                
-                {/* Card 1: Sou freelancer */}
+              <div className="onboarding-profile-grid" style={lockedRole ? { gridTemplateColumns: '1fr', maxWidth: '420px' } : undefined}>
+                {(!lockedRole || lockedRole === 'freelancer') && (
                 <div 
                   className={`onboarding-profile-card ${selectedProfile === 'freelancer' ? 'selected' : ''}`}
-                  onClick={() => setSelectedProfile('freelancer')}
+                  onClick={() => { if (!lockedRole) setSelectedProfile('freelancer'); }}
+                  style={lockedRole ? { cursor: 'default' } : undefined}
                 >
                   {selectedProfile === 'freelancer' && (
                     <div style={{
@@ -193,11 +221,24 @@ export default function OnboardingView() {
                     ))}
                   </div>
                 </div>
+                )}
 
-                {/* Card 2: Sou do RH */}
+                {(!lockedRole || lockedRole === 'rh') && (
                 <div 
                   className={`onboarding-profile-card ${selectedProfile === 'rh' ? 'selected' : ''}`}
-                  onClick={() => setSelectedProfile('rh')}
+                  onClick={() => {
+                    if (lockedRole) return;
+                    setSelectedProfile('rh');
+                    setOnboardingData((prev) => ({
+                      ...prev,
+                      hotelMode: 'create',
+                      hotelOrRole: '',
+                      hotelCnpj: '',
+                      hotelCode: '',
+                      department: prev.department || 'RH / Controladoria',
+                    }));
+                  }}
+                  style={lockedRole ? { cursor: 'default' } : undefined}
                 >
                   {selectedProfile === 'rh' && (
                     <div style={{
@@ -254,10 +295,69 @@ export default function OnboardingView() {
                     ))}
                   </div>
                 </div>
+                )}
 
+                {lockedRole === 'gerencia' && (
+                <div
+                  className="onboarding-profile-card selected"
+                  style={{ cursor: 'default' }}
+                >
+                  <div style={{
+                    position: 'absolute',
+                    top: '14px',
+                    right: '14px',
+                    width: '22px',
+                    height: '22px',
+                    borderRadius: '50%',
+                    background: '#16A34A',
+                    color: 'white',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center'
+                  }}>
+                    <Check size={13} strokeWidth={3} />
+                  </div>
+
+                  <div style={{
+                    width: '48px',
+                    height: '48px',
+                    borderRadius: '2px',
+                    backgroundColor: '#F0FDF4',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    marginBottom: '16px',
+                    color: '#16A34A'
+                  }}>
+                    <ChefHat size={24} />
+                  </div>
+
+                  <h3 style={{ fontSize: '18px', fontWeight: 600, color: '#0F172A', marginBottom: '8px' }}>
+                    Sou da Gerência
+                  </h3>
+                  <p style={{ fontSize: '13px', color: '#64748B', lineHeight: 1.5, marginBottom: '20px', minHeight: '40px' }}>
+                    Quero montar a escala do setor, acompanhar o turno e confirmar a equipe no salão.
+                  </p>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: 'auto' }}>
+                    {[
+                      'Montar escala do seu setor',
+                      'Enviar pedidos ao RH',
+                      'Confirmar presença no turno',
+                      'Acompanhar freelancers do salão'
+                    ].map((item, i) => (
+                      <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '12.5px', color: '#334155' }}>
+                        <div style={{ width: '18px', height: '18px', borderRadius: '50%', background: '#F0FDF4', color: '#16A34A', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                          <Check size={11} strokeWidth={3} />
+                        </div>
+                        <span>{item}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                )}
               </div>
 
-              {/* Info Note Box */}
               <div style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -266,12 +366,13 @@ export default function OnboardingView() {
                 border: '1px solid #DBEAFE',
                 borderRadius: '10px',
                 padding: '14px 18px',
-                marginTop: '24px'
+                marginTop: '20px',
               }}>
                 <Info size={18} color="#0066FF" style={{ flexShrink: 0 }} />
-                <div>
-                  <strong style={{ color: '#0F172A', fontSize: '13px' }}>Você pode alterar depois</strong>
-                  <span style={{ color: '#64748B', fontSize: '13px' }}> — Essa configuração pode ser modificada a qualquer momento nas configurações da sua conta.</span>
+                <div style={{ fontSize: '13px', color: '#334155', lineHeight: 1.45 }}>
+                  {lockedRole
+                    ? 'Perfil definido pelo link de convite — não é necessário escolher outro.'
+                    : 'Você pode alterar depois — Essa configuração pode ser modificada a qualquer momento nas configurações da sua conta.'}
                 </div>
               </div>
 
@@ -329,6 +430,12 @@ export default function OnboardingView() {
                   </div>
 
                   {selectedProfile === 'freelancer' ? (
+                    <>
+                      {inviteCode && (
+                        <div style={{ fontSize: '12.5px', color: '#166534', lineHeight: 1.45, background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: '4px', padding: '10px 12px' }}>
+                          Você será vinculado automaticamente ao estabelecimento <strong>{inviteCode}</strong> ao concluir o cadastro.
+                        </div>
+                      )}
                     <div>
                       <label style={{ display: 'block', fontSize: '12px', fontWeight: 500, color: '#334155', marginBottom: '6px' }}>
                         Função Principal
@@ -347,40 +454,157 @@ export default function OnboardingView() {
                         <option value="Recepcionista">Recepcionista</option>
                       </select>
                     </div>
+                    </>
                   ) : (
                     <>
-                      <div>
-                        <label style={{ display: 'block', fontSize: '12px', fontWeight: 500, color: '#334155', marginBottom: '6px' }}>
-                          Estabelecimento / Empresa
-                        </label>
-                        <div className="auth-input-container">
-                          <Building2 size={16} className="auth-input-icon" />
-                          <input 
-                            type="text"
-                            required
-                            className="auth-input"
-                            value={onboardingData.hotelOrRole}
-                            onChange={(e) => setOnboardingData({ ...onboardingData, hotelOrRole: e.target.value })}
-                            placeholder="Ex: Hotel Atlântico Copacabana"
-                          />
-                        </div>
+                      {/* RH / Gerência: criar estabelecimento (CNPJ) ou entrar com código */}
+                      {!inviteCode && (
+                      <div style={{
+                        display: 'flex',
+                        background: '#F1F5F9',
+                        padding: '3px',
+                        borderRadius: '4px',
+                        border: '1px solid #E2E8F0',
+                        gap: '2px',
+                      }}>
+                        {[
+                          { id: 'create', label: 'Criar estabelecimento' },
+                          { id: 'join', label: 'Já tenho código' },
+                        ].map((opt) => {
+                          const on = (onboardingData.hotelMode || 'create') === opt.id;
+                          return (
+                            <button
+                              key={opt.id}
+                              type="button"
+                              onClick={() => setOnboardingData({ ...onboardingData, hotelMode: opt.id })}
+                              style={{
+                                flex: 1,
+                                padding: '8px 10px',
+                                fontSize: '12px',
+                                fontWeight: on ? 600 : 500,
+                                color: on ? '#0F172A' : '#64748B',
+                                background: on ? '#FFFFFF' : 'transparent',
+                                border: on ? '1px solid #E2E8F0' : '1px solid transparent',
+                                borderRadius: '4px',
+                                cursor: 'pointer',
+                              }}
+                            >
+                              {opt.label}
+                            </button>
+                          );
+                        })}
                       </div>
+                      )}
 
+                      {(inviteCode || (onboardingData.hotelMode || 'create') === 'join') ? (
+                        <>
+                          <div style={{ fontSize: '12px', color: '#64748B', lineHeight: 1.45, background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '4px', padding: '10px 12px' }}>
+                            {inviteCode
+                              ? <>Você entrou pelo link de convite. Confirme o vínculo com o código <strong>{inviteCode}</strong>.</>
+                              : <>Se o estabelecimento já existe no Domu, entre com o <strong>código</strong> ou o CNPJ. Não crie de novo.</>}
+                          </div>
+                          <div>
+                            <label style={{ display: 'block', fontSize: '12px', fontWeight: 500, color: '#334155', marginBottom: '6px' }}>
+                              Código do estabelecimento
+                            </label>
+                            <input
+                              type="text"
+                              className="auth-input"
+                              style={{ paddingLeft: '14px', textTransform: 'uppercase', fontFamily: 'monospace' }}
+                              value={onboardingData.hotelCode || ''}
+                              readOnly={Boolean(inviteCode)}
+                              onChange={(e) => setOnboardingData({ ...onboardingData, hotelCode: e.target.value.toUpperCase() })}
+                              placeholder="Ex: K7M2-9X4P-Q8H3"
+                            />
+                          </div>
+                          {!inviteCode && (
+                          <div>
+                            <label style={{ display: 'block', fontSize: '12px', fontWeight: 500, color: '#334155', marginBottom: '6px' }}>
+                              CNPJ (opcional se já tiver o código)
+                            </label>
+                            <input
+                              type="text"
+                              className="auth-input"
+                              style={{ paddingLeft: '14px' }}
+                              value={onboardingData.hotelCnpj || ''}
+                              onChange={(e) => setOnboardingData({ ...onboardingData, hotelCnpj: formatCnpj(e.target.value) })}
+                              placeholder="00.000.000/0000-00"
+                              maxLength={18}
+                            />
+                          </div>
+                          )}
+                          {selectedProfile === 'gerencia' && (
+                          <div>
+                            <label style={{ display: 'block', fontSize: '12px', fontWeight: 500, color: '#334155', marginBottom: '6px' }}>
+                              Seu cargo / setor
+                            </label>
+                            <input
+                              type="text"
+                              className="auth-input"
+                              style={{ paddingLeft: '14px' }}
+                              value={onboardingData.department || ''}
+                              onChange={(e) => setOnboardingData({ ...onboardingData, department: e.target.value })}
+                              placeholder="Ex: Gerência de A e B / Restaurante"
+                            />
+                          </div>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          <div style={{ fontSize: '12px', color: '#64748B', lineHeight: 1.45, background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '4px', padding: '10px 12px' }}>
+                            O <strong>CNPJ</strong> impede que o mesmo estabelecimento seja cadastrado duas vezes. Depois da criação, o sistema gera um código forte (ex.: K7M2-9X4P-Q8H3) para convidar Gerência e outros RH.
+                          </div>
+                          <div>
+                            <label style={{ display: 'block', fontSize: '12px', fontWeight: 500, color: '#334155', marginBottom: '6px' }}>
+                              Nome do estabelecimento
+                            </label>
+                            <div className="auth-input-container">
+                              <Building2 size={16} className="auth-input-icon" />
+                              <input
+                                type="text"
+                                required
+                                className="auth-input"
+                                value={onboardingData.hotelOrRole}
+                                onChange={(e) => setOnboardingData({ ...onboardingData, hotelOrRole: e.target.value })}
+                                placeholder="Ex: Restaurante Central, Eventos Copacabana"
+                              />
+                            </div>
+                          </div>
+                          <div>
+                            <label style={{ display: 'block', fontSize: '12px', fontWeight: 500, color: '#334155', marginBottom: '6px' }}>
+                              CNPJ
+                            </label>
+                            <input
+                              type="text"
+                              required
+                              className="auth-input"
+                              style={{ paddingLeft: '14px' }}
+                              value={onboardingData.hotelCnpj || ''}
+                              onChange={(e) => setOnboardingData({ ...onboardingData, hotelCnpj: formatCnpj(e.target.value) })}
+                              placeholder="00.000.000/0000-00"
+                              maxLength={18}
+                            />
+                          </div>
+                        </>
+                      )}
+                    </>
+                  )}
+
+                  {selectedProfile !== 'freelancer' && !inviteCode && (
                       <div>
                         <label style={{ display: 'block', fontSize: '12px', fontWeight: 500, color: '#334155', marginBottom: '6px' }}>
                           Departamento / Setor de Gestão
                         </label>
-                        <input 
+                        <input
                           type="text"
                           required
                           className="auth-input"
                           style={{ paddingLeft: '14px' }}
                           value={onboardingData.department}
                           onChange={(e) => setOnboardingData({ ...onboardingData, department: e.target.value })}
-                          placeholder="Ex: Gerência de A&B / Restaurante"
+                          placeholder={selectedProfile === 'rh' ? 'Ex: RH / Controladoria' : 'Ex: Gerência de A e B / Restaurante'}
                         />
                       </div>
-                    </>
                   )}
 
                   <div>
@@ -413,7 +637,29 @@ export default function OnboardingView() {
                   <button 
                     type="button"
                     className="btn-primary" 
-                    onClick={() => setOnboardingStep(3)}
+                    onClick={() => {
+                      if (selectedProfile !== 'freelancer') {
+                        const mode = onboardingData.hotelMode || 'create';
+                        if (mode === 'create') {
+                          if (!(onboardingData.hotelOrRole || '').trim()) {
+                            triggerToast('Informe o nome do estabelecimento.');
+                            return;
+                          }
+                          if (!isValidCnpj(onboardingData.hotelCnpj)) {
+                            triggerToast('CNPJ inválido. Confira os dígitos.');
+                            return;
+                          }
+                        } else {
+                          const code = (onboardingData.hotelCode || '').trim();
+                          const cnpj = String(onboardingData.hotelCnpj || '').replace(/\D/g, '');
+                          if (!code && !isValidCnpj(cnpj)) {
+                            triggerToast('Informe o código do estabelecimento ou um CNPJ válido.');
+                            return;
+                          }
+                        }
+                      }
+                      setOnboardingStep(3);
+                    }}
                   >
                     <span>Continuar</span>
                     <ArrowRight size={16} />
@@ -586,8 +832,31 @@ export default function OnboardingView() {
                     </div>
 
                   </div>
+                ) : selectedProfile === 'gerencia' ? (
+                  /* GERÊNCIA: só alertas (não dispara convocação) */
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', padding: '16px', background: '#F8FAFC', borderRadius: '10px', border: '1px solid #E2E8F0' }}>
+                      <div style={{ maxWidth: '460px' }}>
+                        <span style={{ fontSize: '14px', fontWeight: 500, color: '#0F172A', display: 'block', marginBottom: '4px' }}>
+                          Alertas para Substituições de Emergência
+                        </span>
+                        <p style={{ fontSize: '12.5px', color: '#64748B', lineHeight: 1.4 }}>
+                          Notificações caso algum profissional cancele a presença com pouca antecedência.
+                        </p>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={onboardingData.emergencyAlerts}
+                        onChange={(e) => setOnboardingData({ ...onboardingData, emergencyAlerts: e.target.checked, whatsappNotifications: false })}
+                        style={{ width: '18px', height: '18px', cursor: 'pointer', accentColor: '#0066FF', marginTop: '4px' }}
+                      />
+                    </div>
+                    <div style={{ fontSize: '12.5px', color: '#64748B', lineHeight: 1.45, padding: '0 4px' }}>
+                      A convocação via WhatsApp fica com o RH. Na Gerência, o foco é montar a escala e receber alertas do turno.
+                    </div>
+                  </div>
                 ) : (
-                  /* GERÊNCIA / RH: Preferências Operacionais */
+                  /* RH: Preferências Operacionais */
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                     
                     {/* Convocação WhatsApp */}
@@ -707,7 +976,7 @@ export default function OnboardingView() {
                       background: selectedProfile === 'gerencia' ? '#F0FDF4' : selectedProfile === 'rh' ? '#F3E8FF' : '#EBF3FF',
                       color: selectedProfile === 'gerencia' ? '#16A34A' : selectedProfile === 'rh' ? '#475569' : '#0066FF'
                     }}>
-                      {selectedProfile === 'gerencia' ? 'Sou Gerencia' : selectedProfile === 'rh' ? 'Sou do RH' : 'Sou freelancer'}
+                      {selectedProfile === 'gerencia' ? 'Sou Gerência' : selectedProfile === 'rh' ? 'Sou do RH' : 'Sou freelancer'}
                     </span>
                   </div>
 

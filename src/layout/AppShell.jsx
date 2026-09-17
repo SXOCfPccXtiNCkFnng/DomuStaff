@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState, useRef, useEffect } from 'react';
 import {
   Calendar, Users, CheckCircle2, Clock, Settings, Search,
   Bell, Layers, LogOut, TrendingUp, FileText, Menu, X,
@@ -6,6 +6,8 @@ import {
 import { useApp } from '../store/AppContext';
 import { GERENCIA_DAYS } from '../lib/constants';
 import { isSupabaseConfigured } from '../lib/supabase';
+import Avatar from '../components/Avatar';
+import NotificationPanel from '../components/NotificationPanel';
 
 export default function AppShell({ children }) {
   const {
@@ -15,7 +17,39 @@ export default function AppShell({ children }) {
     toggleDayPickerDay, confirmDayPicker,
     returnModalOpen, setReturnModalOpen, returnReason, setReturnReason,
     confirmReturnToMaitre, goHome, handleLogout, triggerToast,
+    hotel, GERENCIA_DAYS: weekDays, pendingApprovalsCount,
+    inboxBadge, notifications, markNotificationRead, markAllNotificationsRead,
+    notifPanelTick, requestOpenNotifPanel,
   } = useApp();
+
+  const [notifOpen, setNotifOpen] = useState(false);
+  const bellWrapRef = useRef(null);
+
+  const days = weekDays?.length ? weekDays : GERENCIA_DAYS;
+  const establishmentLabel =
+    hotel?.name ||
+    onboardingData?.hotelOrRole ||
+    'Seu estabelecimento';
+  const establishmentCity = String(hotel?.city || '').trim();
+  const unreadCount = (notifications || []).filter((n) => !n.read).length;
+  const badgeCount = Math.max(inboxBadge || 0, unreadCount);
+
+  useEffect(() => {
+    if (!notifOpen) return undefined;
+    const onKey = (e) => { if (e.key === 'Escape') setNotifOpen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [notifOpen]);
+
+  useEffect(() => {
+    if (notifPanelTick > 0) setNotifOpen(true);
+  }, [notifPanelTick]);
+
+  const openNotification = (n) => {
+    markNotificationRead?.(n.id);
+    setNotifOpen(false);
+    if (n.view) setCurrentView(n.view);
+  };
 
   const navItems = useMemo(() => {
     if (selectedProfile === 'freelancer') {
@@ -29,7 +63,7 @@ export default function AppShell({ children }) {
     if (selectedProfile === 'rh') {
       return [
         { id: 'escalas', icon: Layers, label: 'Escalas da semana', view: 'main_kanban' },
-        { id: 'aprovacoes', icon: FileText, label: 'Aprovações', view: 'approval_details', badge: '1' },
+        { id: 'aprovacoes', icon: FileText, label: 'Aprovações', view: 'approval_details', badge: pendingApprovalsCount > 0 ? String(pendingApprovalsCount) : null },
         { id: 'freelancers', icon: Users, label: 'Base de freelancers', view: 'gerencia_freelancers' },
         { id: 'relatorios', icon: TrendingUp, label: 'Relatórios', view: 'rh_relatorios' },
         { id: 'configuracoes', icon: Settings, label: 'Configurações', view: 'configuracoes' },
@@ -37,24 +71,28 @@ export default function AppShell({ children }) {
     }
     return [
       { id: 'escalas', icon: Calendar, label: 'Montar escala', view: 'gerencia_montar_escala' },
-      { id: 'pedidos', icon: FileText, label: 'Meus pedidos', view: 'gerencia_pedidos', badge: '3' },
+      { id: 'pedidos', icon: FileText, label: 'Meus pedidos', view: 'gerencia_pedidos', badge: null },
       { id: 'turno_hoje', icon: CheckCircle2, label: 'Turno de hoje', view: 'gerencia_turno_hoje' },
       { id: 'freelancers', icon: Users, label: 'Freelancers', view: 'gerencia_freelancers' },
       { id: 'configuracoes', icon: Settings, label: 'Configurações', view: 'configuracoes' },
     ];
-  }, [selectedProfile, pendingInviteCount]);
+  }, [selectedProfile, pendingInviteCount, pendingApprovalsCount]);
 
   return (
     <div className="app-shell">
-      {toast && <div className="toast">{toast}</div>}
+      {toast && (
+        <div className={`toast${toast.type === 'err' ? ' toast-err' : toast.type === 'ok' ? ' toast-ok' : ''}${toast.sound ? ' toast-notify' : ''}`}>
+          {typeof toast === 'string' ? toast : toast.msg}
+        </div>
+      )}
 
       {!isSupabaseConfigured && (
         <div style={{
           position: 'fixed', top: 0, left: 0, right: 0, zIndex: 90,
-          background: '#0F172A', color: '#E2E8F0', fontSize: '12px',
-          padding: '6px 16px', textAlign: 'center',
+          background: '#F8FAFC', color: '#475569', fontSize: '12px',
+          padding: '8px 16px', textAlign: 'center', borderBottom: '1px solid #E2E8F0',
         }}>
-          Sem chaves do Supabase — os dados ficam neste navegador. Copie <code>.env.example</code> para <code>.env.local</code> e rode o SQL em supabase/.
+          Modo local ativo — as alterações ficam só neste aparelho até a conexão com o servidor ser configurada.
         </div>
       )}
 
@@ -78,11 +116,11 @@ export default function AppShell({ children }) {
                 : 'Escolha um ou mais dias. No envio do RH, o freelancer recebe todos juntos no WhatsApp.'}
             </p>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '12px' }}>
-              <button type="button" onClick={() => setDayPickerSelected(GERENCIA_DAYS.map((d) => d.id))} className="btn-outline" style={{ padding: '5px 10px', fontSize: '12px' }}>Semana toda</button>
+              <button type="button" onClick={() => setDayPickerSelected(days.map((d) => d.id))} className="btn-outline" style={{ padding: '5px 10px', fontSize: '12px' }}>Semana toda</button>
               <button type="button" onClick={() => setDayPickerSelected(['sex', 'sab', 'dom'])} className="btn-outline" style={{ padding: '5px 10px', fontSize: '12px' }}>Sex–Dom</button>
             </div>
             <div className="week-strip" style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '6px' }}>
-              {GERENCIA_DAYS.map((d) => {
+              {days.map((d) => {
                 const on = dayPickerSelected.includes(d.id);
                 return (
                   <button
@@ -123,18 +161,20 @@ export default function AppShell({ children }) {
             style={{ width: '100%', maxWidth: '420px', background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '2px', padding: '20px' }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div style={{ fontSize: '16px', fontWeight: 600, color: '#0F172A' }}>Devolver ao maître</div>
-            <p style={{ fontSize: '13px', color: '#64748B', margin: '6px 0 14px' }}>O motivo fica no pedido — sem chat. O maître vê e ajusta a escala.</p>
+            <div style={{ fontSize: '16px', fontWeight: 600, color: '#0F172A' }}>Devolver à Gerência</div>
+            <p style={{ fontSize: '13px', color: '#64748B', margin: '6px 0 14px', lineHeight: 1.45 }}>
+              Use quando a escala precisa de ajuste (custo, gente demais/de menos, setor errado…). A observação aparece no pedido da Gerência.
+            </p>
             <textarea
               value={returnReason}
               onChange={(e) => setReturnReason(e.target.value)}
               rows={4}
-              placeholder="Ex.: custo acima do teto — reduzir 2 pessoas ou trocar diária…"
+              placeholder="Ex.: custo acima do teto — reduzir 2 pessoas ou trocar o turno…"
               style={{ width: '100%', padding: '10px 12px', borderRadius: '4px', border: '1px solid #E2E8F0', fontSize: '13px', outline: 'none', resize: 'vertical', fontFamily: 'inherit', boxSizing: 'border-box', marginBottom: '16px' }}
             />
             <div style={{ display: 'flex', gap: '8px' }}>
               <button type="button" onClick={() => setReturnModalOpen(false)} className="btn-outline" style={{ flex: 1, justifyContent: 'center', padding: '10px' }}>Cancelar</button>
-              <button type="button" onClick={confirmReturnToMaitre} className="btn-primary" style={{ flex: 1, padding: '10px' }}>Devolver</button>
+              <button type="button" onClick={confirmReturnToMaitre} className="btn-primary" style={{ flex: 1, padding: '10px' }}>Devolver com observação</button>
             </div>
           </div>
         </div>
@@ -154,7 +194,7 @@ export default function AppShell({ children }) {
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: '15px', fontWeight: 600, color: '#0F172A', letterSpacing: '-0.02em' }}>Domu Staff</div>
               <div style={{ fontSize: '11px', color: '#64748B', fontWeight: 400 }}>
-                {selectedProfile === 'freelancer' ? 'Painel profissional' : 'Hotel Atlântico'}
+                {selectedProfile === 'freelancer' ? 'Painel profissional' : establishmentLabel}
               </div>
             </div>
             <button type="button" className="menu-btn" aria-label="Fechar menu" onClick={(e) => { e.stopPropagation(); setNavOpen(false); }}>
@@ -197,16 +237,12 @@ export default function AppShell({ children }) {
 
         <div style={{ paddingTop: '14px', borderTop: '1px solid #E2E8F0' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '4px' }}>
-            <div style={{
-              width: '32px', height: '32px', borderRadius: '4px', background: '#F1F5F9',
-              color: '#0F172A', fontWeight: 600, fontSize: '12px',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              overflow: 'hidden', flexShrink: 0,
-            }}>
-              {onboardingData.photoUrl ? (
-                <img src={onboardingData.photoUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-              ) : activeUser.initials}
-            </div>
+            <Avatar
+              src={onboardingData.photoUrl}
+              name={onboardingData.name || activeUser.name}
+              size={32}
+              radius="4px"
+            />
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: '13px', fontWeight: 500, color: '#0F172A', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                 {onboardingData.name || activeUser.name}
@@ -238,13 +274,49 @@ export default function AppShell({ children }) {
             />
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '18px' }}>
-            <button type="button" style={{ position: 'relative', color: '#64748B', padding: '4px' }} aria-label="Notificações">
-              <Bell size={17} strokeWidth={1.75} />
-            </button>
+            <div ref={bellWrapRef} style={{ position: 'relative' }}>
+              <button
+                type="button"
+                style={{ position: 'relative', color: badgeCount > 0 || notifOpen ? '#0066FF' : '#64748B', padding: '4px' }}
+                aria-label="Notificações"
+                aria-expanded={notifOpen}
+                onClick={() => setNotifOpen((v) => !v)}
+              >
+                <Bell size={17} strokeWidth={1.75} />
+                {badgeCount > 0 && (
+                  <span style={{
+                    position: 'absolute',
+                    top: '0',
+                    right: '0',
+                    minWidth: '16px',
+                    height: '16px',
+                    padding: '0 4px',
+                    borderRadius: '999px',
+                    background: '#DC2626',
+                    color: '#FFF',
+                    fontSize: '10px',
+                    fontWeight: 700,
+                    lineHeight: '16px',
+                    textAlign: 'center',
+                  }}>
+                    {badgeCount > 9 ? '9+' : badgeCount}
+                  </span>
+                )}
+              </button>
+              <NotificationPanel
+                open={notifOpen}
+                onClose={() => setNotifOpen(false)}
+                items={notifications || []}
+                onOpenItem={openNotification}
+                onMarkAllRead={() => markAllNotificationsRead?.()}
+              />
+            </div>
             {selectedProfile !== 'freelancer' && (
               <div className="hide-sm" style={{ textAlign: 'right' }}>
-                <div style={{ fontSize: '13px', fontWeight: 500, color: '#0F172A' }}>Hotel Atlântico</div>
-                <div style={{ fontSize: '11px', color: '#64748B' }}>Copacabana, RJ</div>
+                <div style={{ fontSize: '13px', fontWeight: 500, color: '#0F172A' }}>{establishmentLabel}</div>
+                {establishmentCity ? (
+                  <div style={{ fontSize: '11px', color: '#64748B' }}>{establishmentCity}</div>
+                ) : null}
               </div>
             )}
           </div>

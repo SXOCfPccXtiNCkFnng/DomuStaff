@@ -125,6 +125,7 @@ export default function FreelancerDashboard({
   onSelectWeekends,
   onSaveAvailability,
   userName,
+  onOpenNotifications,
 }) {
   const pending = invites.filter((i) => i.status === 'pending');
   const accepted = invites.filter((i) => i.status === 'accepted');
@@ -142,9 +143,15 @@ export default function FreelancerDashboard({
             </p>
           </div>
           {pending.length > 0 && (
-            <span className="status-tag warn">
+            <button
+              type="button"
+              className="status-tag warn"
+              onClick={() => onOpenNotifications?.()}
+              title="Abrir histórico de notificações"
+              style={{ cursor: 'pointer', border: 'none' }}
+            >
               <Bell size={12} /> {pending.length}
-            </span>
+            </button>
           )}
         </div>
 

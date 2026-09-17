@@ -8,212 +8,294 @@ import {
 import { useApp } from '../../store/AppContext';
 import {
   GERENCIA_DAYS, GERENCIA_SECTORS, SECTOR_SHIFT, RATE_KIND_LABEL,
-  staffNeeded, formatBRL, dailyRateFor, rateKindForDay,
+  staffNeeded, formatBRL, dailyRateFor, rateKindForDay, dayMapTone,
+  SHIFT_OPTIONS, staffingOptionsFromTech,
 } from '../../lib/constants';
+import Avatar from '../../components/Avatar';
 
 export default function MontarEscala() {
   const {
-    currentView, setCurrentView, toast, navOpen, setNavOpen, triggerToast,
-    selectedProfile, setSelectedProfile, onboardingData, setOnboardingData, activeUser, hotel,
     selectedGerenciaDay, setSelectedGerenciaDay, selectedSector, setSelectedSector,
     gerenciaSearchQuery, setGerenciaSearchQuery,
-    freelancerBaseQuery, setFreelancerBaseQuery, freelancerBaseSector, setFreelancerBaseSector,
     selectedFreelancersByDay, setSelectedFreelancersByDay,
-    sentDays, returnedByDay, guestCountByDay, dailyRates, rhDay, setRhDay,
-    freelancersList, selectedIds, setSelectedIds, activeTab, setActiveTab,
-    checkedInIds, activeRequest, freelancerInvites, freelancerAgenda,
-    pendingInviteCount, dayPickerFor, setDayPickerFor, dayPickerSelected,
-    returnModalOpen, setReturnModalOpen, returnReason, setReturnReason,
+    sentDays, returnedByDay, guestCountByDay, freelancersList,
     toggleGerenciaFreelancer, handleCancelGerenciaSelection, handleSendToRH,
-    openDayPicker, toggleDayPickerDay, confirmDayPicker,
-    handleApproveAndSend, handleReturnToMaitre, confirmReturnToMaitre,
-    toggleSelectOne, confirmPresence, undoPresence, goHome, handleLogout,
-    handleAcceptInvite, handleDeclineInvite, saveAvailability, saveSettings,
-    toggleAvailableDay, toggleAvailableTime, changeAccountField,
-    updateGuestCount, updateDailyRate, techSettings, setTechSettings,
-    onboardingStep, setOnboardingStep, handleFinishOnboarding,
+    getShiftForDay, setShiftForDay,
+    weekLabel, shiftWeek, GERENCIA_DAYS: weekDays,
+    SHIFT_OPTIONS: shiftOptionsFromCtx,
+    techSettings, requestStatusByDay, sentBaselineByDay,
   } = useApp();
 
-const currentDayObj = GERENCIA_DAYS.find(d => d.id === selectedGerenciaDay) || GERENCIA_DAYS[4];
-            const dayGuests = guestCountByDay[selectedGerenciaDay] ?? currentDayObj.guests;
-            const dayNeeded = staffNeeded(dayGuests);
-            const currentDaySelectedIds = selectedFreelancersByDay[selectedGerenciaDay] || [];
-            const currentDaySelectedFreelancers = freelancersList.filter(f => currentDaySelectedIds.includes(f.id) && f.sector === selectedSector);
-            const shift = SECTOR_SHIFT[selectedSector] || '15h – 23h';
-            const selectedCount = currentDaySelectedFreelancers.length;
-            const gap = Math.max(0, dayNeeded - selectedCount);
-            const alreadySent = !!sentDays[selectedGerenciaDay];
-            const dayReturned = returnedByDay[selectedGerenciaDay];
+  const days = weekDays?.length ? weekDays : GERENCIA_DAYS;
+  const shifts = shiftOptionsFromCtx?.length ? shiftOptionsFromCtx : SHIFT_OPTIONS;
+  const currentDayObj = days.find((d) => d.id === selectedGerenciaDay) || days[4] || days[0];
+  const dayIsPast = !!currentDayObj?.isPast;
+  const dayGuests = guestCountByDay[selectedGerenciaDay] ?? 0;
+  const weekGuestCounts = days.map((d) => Number(guestCountByDay[d.id]) || 0);
+  const staffingOpts = staffingOptionsFromTech(techSettings, weekGuestCounts);
+  const dayNeeded = staffNeeded(dayGuests, staffingOpts);
+  const currentDaySelectedIds = selectedFreelancersByDay[selectedGerenciaDay] || [];
+  const currentDaySelectedFreelancers = freelancersList.filter(
+    (f) => currentDaySelectedIds.includes(f.id) && f.sector === selectedSector
+  );
+  const shift = getShiftForDay?.(selectedGerenciaDay, selectedSector)
+    || SECTOR_SHIFT[selectedSector]
+    || '15h – 23h';
+  const selectedCount = currentDaySelectedFreelancers.length;
+  const gap = Math.max(0, dayNeeded - selectedCount);
+  const alreadySent = ['requested', 'sent', 'confirmed'].includes(requestStatusByDay?.[selectedGerenciaDay]);
+  const dayReturned = returnedByDay[selectedGerenciaDay];
+  const selectionKey = currentDaySelectedFreelancers.map((f) => f.id).sort().join('|');
+  const baselineKey = sentBaselineByDay?.[`${selectedGerenciaDay}:${selectedSector}`] ?? '';
+  const teamChanged = selectionKey !== baselineKey;
+  // Mesma ideia do RH: só envia com gente; se já enviou, só reenvia após mudar a equipe
+  const canSend = !dayIsPast && selectedCount > 0 && (!alreadySent || dayReturned || teamChanged);
 
-            const filteredFreelancers = freelancersList
-              .filter(f => f.sector === selectedSector)
-              .filter(f => {
-                if (!gerenciaSearchQuery) return true;
-                const q = gerenciaSearchQuery.toLowerCase();
-                return f.name.toLowerCase().includes(q) || f.role.toLowerCase().includes(q) || (f.notes || '').toLowerCase().includes(q);
-              });
+  const filteredFreelancers = freelancersList
+    .filter((f) => f.sector === selectedSector)
+    .filter((f) => {
+      if (!gerenciaSearchQuery) return true;
+      const q = gerenciaSearchQuery.toLowerCase();
+      return f.name.toLowerCase().includes(q) || f.role.toLowerCase().includes(q) || (f.notes || '').toLowerCase().includes(q);
+    });
 
-            const isAllSelected = filteredFreelancers.length > 0 && filteredFreelancers.every(f => currentDaySelectedIds.includes(f.id));
+  const isAllSelected = filteredFreelancers.length > 0 && filteredFreelancers.every((f) => currentDaySelectedIds.includes(f.id));
 
-            const handleToggleSelectAllDay = (e) => {
-              if (e.target.checked) {
-                const allIds = Array.from(new Set([...currentDaySelectedIds, ...filteredFreelancers.map(f => f.id)]));
-                setSelectedFreelancersByDay(prev => ({ ...prev, [selectedGerenciaDay]: allIds }));
-              } else {
-                const unselectIds = new Set(filteredFreelancers.map(f => f.id));
-                const remaining = currentDaySelectedIds.filter(id => !unselectIds.has(id));
-                setSelectedFreelancersByDay(prev => ({ ...prev, [selectedGerenciaDay]: remaining }));
-              }
-            };
+  const handleToggleSelectAllDay = (e) => {
+    if (e.target.checked) {
+      const allIds = Array.from(new Set([...currentDaySelectedIds, ...filteredFreelancers.map((f) => f.id)]));
+      setSelectedFreelancersByDay((prev) => ({ ...prev, [selectedGerenciaDay]: allIds }));
+    } else {
+      const unselectIds = new Set(filteredFreelancers.map((f) => f.id));
+      const remaining = currentDaySelectedIds.filter((id) => !unselectIds.has(id));
+      setSelectedFreelancersByDay((prev) => ({ ...prev, [selectedGerenciaDay]: remaining }));
+    }
+  };
 
+  const peopleLabel = (n) => {
+    const v = Number(n) || 0;
+    return `${v} ${v === 1 ? 'pessoa' : 'pessoas'}`;
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
+      <div>
+        <h1 className="page-title">Montar escala</h1>
+        <p className="page-sub">Escolha o dia e o turno — a previsão de pessoas fica em Configurações. Depois monte o time e envie ao RH.</p>
+      </div>
+
+      {dayReturned && (
+        <div style={{
+          background: '#FEF2F2',
+          border: '1px solid #FECACA',
+          borderRadius: '2px',
+          padding: '12px 14px',
+          fontSize: '13px',
+          color: '#7F1D1D',
+          lineHeight: 1.45,
+        }}>
+          <div style={{ fontWeight: 600, marginBottom: '2px' }}>
+            Devolvida pelo RH · {dayReturned.author}
+          </div>
+          {dayReturned.reason}
+        </div>
+      )}
+
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <button
+            type="button"
+            onClick={() => shiftWeek?.(-1)}
+            style={{ width: '32px', height: '32px', borderRadius: '4px', border: '1px solid #E2E8F0', background: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: '#64748B' }}
+          >
+            <ChevronLeft size={16} />
+          </button>
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            padding: '6px 12px',
+            background: '#FFFFFF',
+            border: '1px solid #E2E8F0',
+            borderRadius: '4px',
+            fontSize: '13px',
+            fontWeight: 500,
+            color: '#0F172A',
+          }}>
+            <Calendar size={14} color="#64748B" />
+            <span>{weekLabel || 'Esta semana'}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => shiftWeek?.(1)}
+            style={{ width: '32px', height: '32px', borderRadius: '4px', border: '1px solid #E2E8F0', background: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: '#64748B' }}
+          >
+            <ChevronRight size={16} />
+          </button>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
+          {GERENCIA_SECTORS.map((sec) => {
+            const isSecActive = selectedSector === sec.id;
+            const SecIcon = sec.icon;
             return (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
-                <div>
-                  <h1 className="page-title">Montar escala</h1>
-                  <p className="page-sub">Monte o time do setor e envie ao RH.</p>
-                </div>
+              <button
+                key={sec.id}
+                type="button"
+                onClick={() => setSelectedSector(sec.id)}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '6px 12px',
+                  borderRadius: '4px',
+                  border: isSecActive ? '1px solid #0066FF' : '1px solid transparent',
+                  background: isSecActive ? '#EBF3FF' : 'transparent',
+                  color: isSecActive ? '#0066FF' : '#64748B',
+                  fontSize: '13px',
+                  fontWeight: isSecActive ? 600 : 500,
+                  cursor: 'pointer',
+                }}
+              >
+                <SecIcon size={14} />
+                <span>{sec.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
 
-                {dayReturned && (
-                  <div style={{
-                    background: '#FEF2F2',
-                    border: '1px solid #FECACA',
-                    borderRadius: '2px',
-                    padding: '12px 14px',
-                    fontSize: '13px',
-                    color: '#7F1D1D',
-                    lineHeight: 1.45,
-                  }}>
-                    <div style={{ fontWeight: 600, marginBottom: '2px' }}>
-                      Devolvida pelo RH · {dayReturned.author}
-                    </div>
-                    {dayReturned.reason}
-                  </div>
-                )}
+      <div className="week-strip" style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '8px' }}>
+        {days.map((day) => {
+          const isDayActive = selectedGerenciaDay === day.id;
+          const count = (selectedFreelancersByDay[day.id] || []).length;
+          const guests = guestCountByDay[day.id] ?? 0;
+          const needed = staffNeeded(guests, staffingOpts);
+          const pct = Math.min(100, Math.round((count / Math.max(1, needed)) * 100));
+          const isSent = ['requested', 'sent', 'confirmed'].includes(requestStatusByDay?.[day.id]);
+          const kind = rateKindForDay(day);
+          const tone = dayMapTone(kind, { active: isDayActive, isToday: day.isToday });
+          const dayShift = getShiftForDay?.(day.id, selectedSector) || SECTOR_SHIFT[selectedSector];
+          const past = !!day.isPast;
 
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <button
-                      type="button"
-                      onClick={() => triggerToast('Semana anterior')}
-                      style={{ width: '32px', height: '32px', borderRadius: '4px', border: '1px solid #E2E8F0', background: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: '#64748B' }}
-                    >
-                      <ChevronLeft size={16} />
-                    </button>
-                    <div style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px',
-                      padding: '6px 12px',
-                      background: '#FFFFFF',
-                      border: '1px solid #E2E8F0',
-                      borderRadius: '4px',
-                      fontSize: '13px',
-                      fontWeight: 500,
-                      color: '#0F172A'
-                    }}>
-                      <Calendar size={14} color="#64748B" />
-                      <span>15 – 21 de setembro de 2025</span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => triggerToast('Próxima semana')}
-                      style={{ width: '32px', height: '32px', borderRadius: '4px', border: '1px solid #E2E8F0', background: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: '#64748B' }}
-                    >
-                      <ChevronRight size={16} />
-                    </button>
-                  </div>
+          return (
+            <div
+              key={day.iso || day.id}
+              role="button"
+              tabIndex={0}
+              onClick={() => setSelectedGerenciaDay(day.id)}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setSelectedGerenciaDay(day.id); }}
+              style={{
+                background: tone.background,
+                border: tone.border,
+                borderRadius: '2px',
+                padding: '12px 8px 10px',
+                textAlign: 'left',
+                cursor: 'pointer',
+                opacity: past ? 0.72 : 1,
+                boxShadow: kind !== 'week' && !isDayActive ? `inset 0 2px 0 0 ${tone.bar}` : 'none',
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                <span style={{ fontSize: '13px', fontWeight: 600, color: tone.title }}>
+                  {day.label} {day.date}
+                </span>
+                {isSent && <Check size={12} color="#16A34A" />}
+              </div>
+              {past && (
+                <div style={{ fontSize: '10px', color: '#94A3B8', marginBottom: '4px' }}>Dia passado</div>
+              )}
+              <div style={{ fontSize: '11px', color: '#64748B', marginBottom: '6px' }}>
+                {Number(guests) || 0} total de pessoas
+              </div>
+              <div style={{
+                fontSize: '10px',
+                fontWeight: 500,
+                color: tone.meta,
+                marginBottom: '6px',
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+              }}>
+                {dayShift}
+              </div>
+              <div style={{ fontSize: '13px', fontWeight: 600, color: '#0F172A', marginBottom: '6px' }}>
+                {count}/{needed}
+              </div>
+              <div style={{ height: '3px', background: '#E2E8F0', overflow: 'hidden' }}>
+                <div style={{
+                  height: '100%',
+                  width: `${pct}%`,
+                  background: count === 0 ? 'transparent' : (count >= needed ? '#16A34A' : '#0066FF'),
+                }} />
+              </div>
+            </div>
+          );
+        })}
+      </div>
 
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
-                    {GERENCIA_SECTORS.map(sec => {
-                      const isSecActive = selectedSector === sec.id;
-                      const SecIcon = sec.icon;
-                      return (
-                        <button
-                          key={sec.id}
-                          type="button"
-                          onClick={() => setSelectedSector(sec.id)}
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '6px',
-                            padding: '6px 12px',
-                            borderRadius: '4px',
-                            border: isSecActive ? '1px solid #0066FF' : '1px solid transparent',
-                            background: isSecActive ? '#EBF3FF' : 'transparent',
-                            color: isSecActive ? '#0066FF' : '#64748B',
-                            fontSize: '13px',
-                            fontWeight: isSecActive ? 600 : 500,
-                            cursor: 'pointer'
-                          }}
-                        >
-                          <SecIcon size={14} />
-                          <span>{sec.label}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
+      <div style={{
+        background: '#FFFFFF',
+        border: '1px solid #E2E8F0',
+        borderRadius: '2px',
+        padding: '12px 14px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '10px',
+      }}>
+        <div style={{ fontSize: '13px', fontWeight: 600, color: '#0F172A' }}>
+          Turno de {currentDayObj?.fullDay || 'hoje'}
+        </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+          {shifts.map((opt) => {
+            const on = shift === opt.time;
+            return (
+              <button
+                key={opt.id}
+                type="button"
+                disabled={dayIsPast}
+                onClick={() => {
+                  if (dayIsPast) return;
+                  setShiftForDay?.(selectedGerenciaDay, opt.time);
+                }}
+                style={{
+                  padding: '7px 12px',
+                  borderRadius: '4px',
+                  border: on ? '1px solid #0066FF' : '1px solid #E2E8F0',
+                  background: on ? '#EBF3FF' : '#FFF',
+                  color: on ? '#0066FF' : '#475569',
+                  fontSize: '12px',
+                  fontWeight: on ? 600 : 500,
+                  cursor: dayIsPast ? 'not-allowed' : 'pointer',
+                  textAlign: 'left',
+                  opacity: dayIsPast ? 0.55 : 1,
+                }}
+              >
+                <div>{opt.label}</div>
+                <div style={{ fontSize: '11px', opacity: 0.8, marginTop: '1px' }}>{opt.time}</div>
+              </button>
+            );
+          })}
+        </div>
+        <div style={{ fontSize: '12px', color: '#64748B' }}>
+          Previsão neste dia: <strong style={{ color: '#0F172A' }}>{peopleLabel(dayGuests)}</strong>
+          {' · '}meta sugerida <strong style={{ color: '#0F172A' }}>{dayNeeded}</strong> na equipe
+        </div>
+      </div>
 
-                <div className="week-strip" style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '8px' }}>
-                  {GERENCIA_DAYS.map(day => {
-                    const isDayActive = selectedGerenciaDay === day.id;
-                    const count = (selectedFreelancersByDay[day.id] || []).length;
-                    const guests = guestCountByDay[day.id] ?? day.guests;
-                    const needed = staffNeeded(guests);
-                    const pct = Math.min(100, Math.round((count / needed) * 100));
-                    const isSent = !!sentDays[day.id];
-
-                    return (
-                      <button
-                        key={day.id}
-                        type="button"
-                        onClick={() => setSelectedGerenciaDay(day.id)}
-                        style={{
-                          background: isDayActive ? '#EBF3FF' : '#FFFFFF',
-                          border: isDayActive ? '1px solid #0066FF' : '1px solid #E2E8F0',
-                          borderRadius: '2px',
-                          padding: '12px 8px 10px',
-                          textAlign: 'left',
-                          cursor: 'pointer'
-                        }}
-                      >
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                          <span style={{ fontSize: '13px', fontWeight: 600, color: isDayActive ? '#0066FF' : '#0F172A' }}>
-                            {day.label} {day.date}
-                          </span>
-                          {isSent && <Check size={12} color="#16A34A" />}
-                        </div>
-                        <div style={{ fontSize: '11px', color: '#64748B', marginBottom: '10px' }}>
-                          {guests} hóspedes
-                        </div>
-                        <div style={{ fontSize: '13px', fontWeight: 600, color: '#0F172A', marginBottom: '6px' }}>
-                          {count}/{needed}
-                        </div>
-                        <div style={{ height: '3px', background: '#E2E8F0', overflow: 'hidden' }}>
-                          <div style={{
-                            height: '100%',
-                            width: `${pct}%`,
-                            background: count === 0 ? 'transparent' : (count >= needed ? '#16A34A' : '#0066FF')
-                          }} />
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-
-                <div className="split-2" style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr', gap: '12px', alignItems: 'start' }}>
-                  <div style={{ background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '2px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 16px', borderBottom: '1px solid #E2E8F0' }}>
-                      <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px' }}>
-                        <h2 style={{ fontSize: '14px', fontWeight: 600, color: '#0F172A', margin: 0 }}>
-                          Disponíveis
-                        </h2>
-                        <span style={{ fontSize: '12px', color: '#64748B' }}>{filteredFreelancers.length}</span>
-                      </div>
-                      <span style={{ fontSize: '12px', color: '#64748B' }}>
-                        {GERENCIA_SECTORS.find(s => s.id === selectedSector)?.label} · {shift}
-                      </span>
-                    </div>
+      <div className="split-2" style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr', gap: '12px', alignItems: 'start' }}>
+        <div style={{ background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '2px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 16px', borderBottom: '1px solid #E2E8F0' }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px' }}>
+              <h2 style={{ fontSize: '14px', fontWeight: 600, color: '#0F172A', margin: 0 }}>
+                Disponíveis
+              </h2>
+              <span style={{ fontSize: '12px', color: '#64748B' }}>{filteredFreelancers.length}</span>
+            </div>
+            <span style={{ fontSize: '12px', color: '#64748B' }}>
+              {GERENCIA_SECTORS.find((s) => s.id === selectedSector)?.label} · {shift}
+            </span>
+          </div>
 
                     <div style={{ padding: '12px 16px', borderBottom: '1px solid #E2E8F0' }}>
                       <div style={{ position: 'relative' }}>
@@ -280,11 +362,7 @@ const currentDayObj = GERENCIA_DAYS.find(d => d.id === selectedGerenciaDay) || G
                                 </td>
                                 <td style={{ padding: '10px 8px' }}>
                                   <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                    <img
-                                      src={f.avatar}
-                                      alt={f.name}
-                                      style={{ width: '28px', height: '28px', borderRadius: '50%', objectFit: 'cover' }}
-                                    />
+                                    <Avatar src={f.avatar} name={f.name} size={28} />
                                     <div>
                                       <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                                         <span style={{ fontSize: '13px', fontWeight: 500, color: '#0F172A' }}>{f.name}</span>
@@ -374,7 +452,7 @@ const currentDayObj = GERENCIA_DAYS.find(d => d.id === selectedGerenciaDay) || G
                               }}
                             >
                               <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                <img src={f.avatar} alt={f.name} style={{ width: '28px', height: '28px', borderRadius: '50%', objectFit: 'cover' }} />
+                                <Avatar src={f.avatar} name={f.name} size={28} />
                                 <div>
                                   <div style={{ fontSize: '13px', fontWeight: 500, color: '#0F172A' }}>{f.name}</div>
                                   <div style={{ fontSize: '11px', color: '#64748B' }}>{f.role}</div>
@@ -397,7 +475,7 @@ const currentDayObj = GERENCIA_DAYS.find(d => d.id === selectedGerenciaDay) || G
                     <div style={{ background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '2px', padding: '16px' }}>
                       <div style={{ fontSize: '14px', fontWeight: 600, color: '#0F172A', marginBottom: '14px' }}>Resumo</div>
                       {[
-                        { label: 'Ocupação', value: `${dayGuests} hóspedes` },
+                        { label: 'Pessoas', value: peopleLabel(dayGuests) },
                         { label: 'Turno', value: shift },
                         { label: 'Meta', value: `${dayNeeded} pessoas` },
                         { label: 'Faltam', value: gap === 0 ? 'Completo' : `${gap} vaga${gap > 1 ? 's' : ''}` },
@@ -409,13 +487,21 @@ const currentDayObj = GERENCIA_DAYS.find(d => d.id === selectedGerenciaDay) || G
                       ))}
                     </div>
 
-                    {dayReturned ? (
+                    {dayIsPast ? (
+                      <div style={{ fontSize: '12px', color: '#DC2626', padding: '0 2px' }}>
+                        Dia passado — só consulta. Monte a escala a partir de hoje.
+                      </div>
+                    ) : dayReturned ? (
                       <div style={{ fontSize: '12px', color: '#DC2626', padding: '0 2px' }}>
                         Ajuste a equipe e reenvie ao RH.
                       </div>
-                    ) : alreadySent ? (
+                    ) : alreadySent && !teamChanged ? (
                       <div style={{ fontSize: '12px', color: '#16A34A', padding: '0 2px' }}>
-                        Esta escala já foi enviada ao RH.
+                        Esta escala já foi enviada ao RH. Altere a equipe para reenviar.
+                      </div>
+                    ) : selectedCount === 0 ? (
+                      <div style={{ fontSize: '12px', color: '#64748B', padding: '0 2px' }}>
+                        Selecione ao menos um profissional para enviar.
                       </div>
                     ) : null}
 
@@ -424,7 +510,8 @@ const currentDayObj = GERENCIA_DAYS.find(d => d.id === selectedGerenciaDay) || G
                         type="button"
                         onClick={handleCancelGerenciaSelection}
                         className="btn-outline"
-                        style={{ flex: 1, padding: '10px', justifyContent: 'center' }}
+                        disabled={dayIsPast || selectedCount === 0}
+                        style={{ flex: 1, padding: '10px', justifyContent: 'center', opacity: (dayIsPast || selectedCount === 0) ? 0.45 : 1 }}
                       >
                         Limpar
                       </button>
@@ -432,9 +519,10 @@ const currentDayObj = GERENCIA_DAYS.find(d => d.id === selectedGerenciaDay) || G
                         type="button"
                         onClick={handleSendToRH}
                         className="btn-primary"
-                        style={{ flex: 1.6, padding: '10px' }}
+                        disabled={!canSend}
+                        style={{ flex: 1.6, padding: '10px', opacity: canSend ? 1 : 0.45, cursor: canSend ? 'pointer' : 'not-allowed' }}
                       >
-                        <Send size={14} /> {dayReturned ? 'Reenviar ao RH' : alreadySent ? 'Reenviar ao RH' : 'Enviar ao RH'}
+                        <Send size={14} /> {dayReturned || (alreadySent && teamChanged) ? 'Reenviar ao RH' : alreadySent ? 'Reenviar ao RH' : 'Enviar ao RH'}
                       </button>
                     </div>
                   </div>
