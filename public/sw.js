@@ -1,8 +1,15 @@
-const CACHE = 'domu-staff-v2';
+const CACHE = 'domu-staff-v3';
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE).then((cache) => cache.addAll(['/', '/index.html', '/manifest.webmanifest']))
+    caches.open(CACHE).then((cache) => cache.addAll([
+      '/',
+      '/index.html',
+      '/manifest.webmanifest',
+      '/favicon.ico',
+      '/icons/icon-192.png',
+      '/icons/icon-512.png',
+    ]))
   );
   self.skipWaiting();
 });

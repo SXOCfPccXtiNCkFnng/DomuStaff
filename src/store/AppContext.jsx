@@ -3,7 +3,7 @@ import {
   GERENCIA_DAYS, GERENCIA_SECTORS, PROFILE_HOME, SECTOR_SHIFT, DAILY_RATES,
   SHIFT_OPTIONS, defaultShiftForSector,
   formatInviteDays, inviteDateSummary, dailyRateFor, rateKindForDay, initialsFrom,
-  buildWeekDays, setGerenciaDays, formatWeekRangeLabel,
+  buildWeekDays, setGerenciaDays, formatWeekRangeLabel, shiftTimesMatch,
 } from '../lib/constants';
 import * as api from '../lib/api';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
@@ -238,7 +238,13 @@ export function AppProvider({ children }) {
     }
     if (typeof Notification !== 'undefined' && Notification.permission === 'granted' && showToast) {
       try {
-        new Notification('Domu Staff', { body: item.body || item.title, silent: true });
+        new Notification('Domu Staff', {
+          body: item.body || item.title,
+          icon: '/favicon.ico',
+          badge: '/favicon.ico',
+          silent: false,
+          tag: sourceId || entry.id,
+        });
       } catch { /* ignore */ }
     }
   };
@@ -274,17 +280,32 @@ export function AppProvider({ children }) {
     setGuestCountByDay(Object.fromEntries(days.map((d) => [d.id, byIso[d.iso] ?? 0])));
   };
 
-  const shiftWeek = (delta) => {
+  const shiftWeek = async (delta) => {
     const next = weekOffset + delta;
     const days = buildWeekDays(next);
     setWeekOffset(next);
     setWeekDays(days);
     setGerenciaDays(days);
-    remapGuestsForWeek(days, occupancyByIso);
     const today = days.find((d) => d.isToday);
+    const fallback = days[0];
     if (today) {
       setRhDay(today.id);
       setSelectedGerenciaDay(today.id);
+    } else if (fallback) {
+      setRhDay(fallback.id);
+      setSelectedGerenciaDay(fallback.id);
+    }
+    // Recarrega escalas/convites da semana — evita misturar sex/sáb de outra semana
+    const acc = accountRef.current;
+    if (acc?.hotelId) {
+      try {
+        const data = await api.loadHotelData(acc);
+        applyHotelDataRef.current?.(data);
+      } catch {
+        remapGuestsForWeek(days, occupancyByIso);
+      }
+    } else {
+      remapGuestsForWeek(days, occupancyByIso);
     }
   };
 
@@ -524,6 +545,7 @@ export function AppProvider({ children }) {
             && prevStatus !== 'requested'
             && prevStatus !== 'sent';
           const becameReturned = status === 'returned' && prevStatus !== 'returned';
+          const becameSent = status === 'sent' && prevStatus !== 'sent';
 
           if (role === 'rh' && becameRequested) {
             if (createdBy && createdBy === myId) return;
@@ -546,6 +568,16 @@ export function AppProvider({ children }) {
               view: 'gerencia_pedidos',
               kind: 'return',
               sourceId: row.id ? `return-${row.id}` : null,
+            });
+          }
+
+          if (role === 'gerencia' && becameSent) {
+            pushNotification({
+              title: 'RH aprovou a escala',
+              body: 'Os convites foram enviados aos freelancers.',
+              view: 'gerencia_pedidos',
+              kind: 'scale-sent',
+              sourceId: row.id ? `sent-${row.id}` : null,
             });
           }
         },
@@ -575,7 +607,7 @@ export function AppProvider({ children }) {
             pushNotification({
               title: 'Convite aceito',
               body: who || 'Um profissional confirmou a escala.',
-              view: 'main_kanban',
+              view: role === 'gerencia' ? 'gerencia_pedidos' : 'main_kanban',
               kind: 'invite-accepted',
               sourceId: row.id ? `invite-ok-${row.id}` : null,
             });
@@ -583,7 +615,7 @@ export function AppProvider({ children }) {
             pushNotification({
               title: 'Convite recusado',
               body: who || 'Um profissional recusou — chame um substituto.',
-              view: 'approval_details',
+              view: role === 'gerencia' ? 'gerencia_montar_escala' : 'approval_details',
               kind: 'invite-declined',
               sourceId: row.id ? `invite-no-${row.id}` : null,
             });
@@ -629,8 +661,15 @@ export function AppProvider({ children }) {
       try { Notification.requestPermission(); } catch { /* ignore */ }
     }
 
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return;
+      refreshHotel();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+
     return () => {
       window.clearTimeout(debounceTimer);
+      document.removeEventListener('visibilitychange', onVisible);
       supabase.removeChannel(channel);
     };
   }, [account?.hotelId, account?.role, account?.id, myProfessionalUuid]);
@@ -1016,11 +1055,28 @@ export function AppProvider({ children }) {
       const f = freelancersList.find((p) => p.id === id);
       return f?.sector === selectedSector;
     });
-    if (!codes.length) {
-      triggerToast('Selecione ao menos um profissional antes de enviar ao RH.', 'err');
+    const shiftLabel = getShiftForDay(selectedGerenciaDay, selectedSector);
+    const alreadyForShift = new Set(
+      (invitedByDay[selectedGerenciaDay] || [])
+        .filter((e) => {
+          const st = typeof e === 'string' ? 'pending' : (e.status || 'pending');
+          if (!['pending', 'accepted', 'confirmed'].includes(st)) return false;
+          const t = typeof e === 'string' ? '' : (e.time || '');
+          return !t || shiftTimesMatch(t, shiftLabel);
+        })
+        .map((e) => (typeof e === 'string' ? e : e.code)),
+    );
+    const freshCodes = codes.filter((id) => !alreadyForShift.has(id));
+    if (!freshCodes.length) {
+      triggerToast(
+        alreadyForShift.size
+          ? 'Esses profissionais já foram convocados neste horário. Troque o turno ou chame outra pessoa.'
+          : 'Selecione ao menos um profissional antes de enviar ao RH.',
+        'err',
+      );
       return;
     }
-    const missingUuid = codes.filter((c) => !uuidByCode?.[c]);
+    const missingUuid = freshCodes.filter((c) => !uuidByCode?.[c]);
     if (missingUuid.length) {
       triggerToast('Não foi possível identificar um dos profissionais. Atualize a página e tente de novo.', 'err');
       return;
@@ -1033,16 +1089,28 @@ export function AppProvider({ children }) {
         sector: selectedSector,
         dayId: selectedGerenciaDay,
         guestCount: guestCountByDay[selectedGerenciaDay],
-        professionalCodes: codes,
+        professionalCodes: freshCodes,
         uuidByCode,
         createdBy: account?.id,
-        shift: getShiftForDay(selectedGerenciaDay, selectedSector),
+        shift: shiftLabel,
       });
       setRequestStatusByDay((prev) => ({ ...prev, [selectedGerenciaDay]: 'requested' }));
       setSentBaselineByDay((prev) => ({
         ...prev,
-        [`${selectedGerenciaDay}:${selectedSector}`]: [...codes].sort().join('|'),
+        [`${selectedGerenciaDay}:${selectedSector}`]: [...freshCodes].sort().join('|'),
       }));
+      setInvitedByDay((prev) => {
+        const next = { ...prev };
+        const list = next[selectedGerenciaDay] ? [...next[selectedGerenciaDay]] : [];
+        freshCodes.forEach((code) => {
+          if (!list.some((e) => (typeof e === 'string' ? e : e.code) === code
+            && shiftTimesMatch(typeof e === 'string' ? shiftLabel : (e.time || shiftLabel), shiftLabel))) {
+            list.push({ code, time: shiftLabel, status: 'pending' });
+          }
+        });
+        next[selectedGerenciaDay] = list;
+        return next;
+      });
       setReturnedByDay((prev) => {
         if (!prev[selectedGerenciaDay]) return prev;
         const next = { ...prev };
@@ -1357,11 +1425,9 @@ export function AppProvider({ children }) {
     }
 
     const dayIdsByCode = {};
+    // Um convite = um dia (o dia em análise). Evita Sex+Sáb no mesmo pacote.
     uniqueCodes.forEach((fid) => {
-      let dayIds = dayList.map((d) => d.id).filter((id) => (selectedFreelancersByDay[id] || []).includes(fid));
-      if (!dayIds.includes(rhDay)) dayIds = [...dayIds, rhDay];
-      if (!dayIds.length) dayIds = [rhDay];
-      dayIdsByCode[fid] = dayIds;
+      dayIdsByCode[fid] = [rhDay];
     });
 
     const missingUuid = uniqueCodes.filter((c) => !uuidByCode?.[c]);
@@ -1488,13 +1554,16 @@ export function AppProvider({ children }) {
   };
 
   const confirmPresence = async (f) => {
+    const today = (weekDays?.length ? weekDays : GERENCIA_DAYS).find((d) => d.isToday)
+      || (weekDays?.length ? weekDays : GERENCIA_DAYS)[0];
+    const dayId = today?.id || 'sex';
     setCheckedInIds((prev) => (prev.includes(f.id) ? prev : [...prev, f.id]));
     try {
       await api.setCheckin({
         hotelId: account?.hotelId,
         professionalCode: f.id,
         uuidByCode,
-        dayId: 'sex',
+        dayId,
         present: true,
         byProfileId: account?.id,
       });
@@ -1503,13 +1572,16 @@ export function AppProvider({ children }) {
   };
 
   const undoPresence = async (f) => {
+    const today = (weekDays?.length ? weekDays : GERENCIA_DAYS).find((d) => d.isToday)
+      || (weekDays?.length ? weekDays : GERENCIA_DAYS)[0];
+    const dayId = today?.id || 'sex';
     setCheckedInIds((prev) => prev.filter((id) => id !== f.id));
     try {
       await api.setCheckin({
         hotelId: account?.hotelId,
         professionalCode: f.id,
         uuidByCode,
-        dayId: 'sex',
+        dayId,
         present: false,
         byProfileId: account?.id,
       });

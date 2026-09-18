@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Download, X } from 'lucide-react';
+import { X } from 'lucide-react';
 
 const DISMISS_KEY = 'domu_install_banner_dismissed';
 const DISMISS_DAYS = 14;
@@ -121,10 +121,11 @@ export default function InstallAppBanner() {
     >
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
         <div style={{
-          width: 40, height: 40, borderRadius: 10, background: '#0066FF',
+          width: 40, height: 40, borderRadius: 10, background: '#FFF',
           display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+          overflow: 'hidden',
         }}>
-          <Download size={20} color="#FFF" />
+          <img src="/favicon.ico" alt="" width={40} height={40} style={{ objectFit: 'cover' }} />
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 14, fontWeight: 700, lineHeight: 1.3 }}>

@@ -155,14 +155,12 @@ export default function Kanban() {
       }))
     : [];
 
-  // Confirmadas: pelo menos 1 aceito e ninguém pendente nesse setor
+  // Confirmadas: aceitos sem pendência e sem recusa no mesmo card
   const confirmadas = sectorCards
-    .filter((c) => c.accepted > 0 && c.pending === 0)
+    .filter((c) => c.accepted > 0 && c.pending === 0 && c.declined === 0)
     .map((c) => ({
       ...c,
-      progress: c.declined
-        ? `${c.accepted} confirmado${c.accepted === 1 ? '' : 's'} · ${c.declined} recusou`
-        : `${c.accepted} confirmado${c.accepted === 1 ? '' : 's'}`,
+      progress: `${c.accepted} confirmado${c.accepted === 1 ? '' : 's'}`,
     }));
 
   // Pendências: devolvida OU recusas precisando substituto
@@ -170,7 +168,9 @@ export default function Kanban() {
     .filter((c) => c.declined > 0)
     .map((c) => ({
       ...c,
-      progress: `${c.declined} recusou — chame substituto`,
+      progress: c.accepted
+        ? `${c.declined} recusou · ${c.accepted} ok — chame substituto`
+        : `${c.declined} recusou — chame substituto`,
       alert: true,
     }));
   const pendenciasFromReturn = isReturned

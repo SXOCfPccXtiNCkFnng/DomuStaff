@@ -7,7 +7,7 @@ import {
   staffingOptionsFromTech,
 } from '../../lib/constants';
 
-function statusMeta({ sent, returned, requestStatus }) {
+function statusMeta({ sent, returned, requestStatus, declinedCount, acceptedCount }) {
   if (returned) {
     return {
       label: 'Devolvida pela RH',
@@ -16,19 +16,27 @@ function statusMeta({ sent, returned, requestStatus }) {
       action: 'Ajustar',
     };
   }
+  if (declinedCount > 0) {
+    return {
+      label: declinedCount === 1 ? '1 recusou' : `${declinedCount} recusaram`,
+      color: '#DC2626',
+      bg: '#FEF2F2',
+      action: 'Substituir',
+    };
+  }
+  if (requestStatus === 'confirmed' || (acceptedCount > 0 && !declinedCount)) {
+    return {
+      label: 'Confirmada',
+      color: '#16A34A',
+      bg: '#F0FDF4',
+      action: 'Abrir',
+    };
+  }
   if (requestStatus === 'sent') {
     return {
       label: 'Convocando',
       color: '#0066FF',
       bg: '#EBF3FF',
-      action: 'Abrir',
-    };
-  }
-  if (requestStatus === 'confirmed') {
-    return {
-      label: 'Confirmada',
-      color: '#16A34A',
-      bg: '#F0FDF4',
       action: 'Abrir',
     };
   }
@@ -58,6 +66,7 @@ export default function Pedidos() {
     returnedByDay,
     guestCountByDay,
     requestStatusByDay = {},
+    invitedByDay = {},
     GERENCIA_DAYS: weekDays,
     weekLabel,
     getShiftForDay,
@@ -74,20 +83,28 @@ export default function Pedidos() {
     return days
       .map((day) => {
         const codes = selectedFreelancersByDay[day.id] || [];
+        const invites = (invitedByDay[day.id] || []).map((e) => (
+          typeof e === 'string' ? { code: e, status: 'pending' } : e
+        ));
+        const declinedCount = invites.filter((e) => e.status === 'declined').length;
+        const acceptedCount = invites.filter((e) => e.status === 'accepted' || e.status === 'confirmed').length;
         const guests = Number(guestCountByDay[day.id]) || 0;
         const needed = staffNeeded(guests, staffingOpts);
         const sent = !!sentDays[day.id];
         const returned = returnedByDay[day.id];
         const requestStatus = requestStatusByDay[day.id] || null;
-        const hasActivity = codes.length > 0 || sent || returned || (requestStatus && requestStatus !== 'draft');
+        const hasActivity = codes.length > 0 || invites.length > 0 || sent || returned
+          || (requestStatus && requestStatus !== 'draft');
         if (!hasActivity) return null;
 
-        const meta = statusMeta({ sent, returned, requestStatus });
+        const meta = statusMeta({ sent, returned, requestStatus, declinedCount, acceptedCount });
         const shift = getShiftForDay?.(day.id, selectedSector) || '—';
         const title = `${day.fullDay || day.label} · ${sectorLabel} · ${shift}`;
         const detail = returned
           ? `Motivo do RH: ${returned.reason}`
-          : `${codes.length}/${needed || codes.length || 0} na lista · ${guests} total de pessoas`;
+          : declinedCount
+            ? `${declinedCount} recusou — chame substituto · ${acceptedCount} confirmado${acceptedCount === 1 ? '' : 's'}`
+            : `${Math.max(codes.length, invites.length)}/${needed || codes.length || 0} na lista · ${guests} total de pessoas`;
 
         return {
           day: day.id,
@@ -109,6 +126,7 @@ export default function Pedidos() {
     sentDays,
     returnedByDay,
     requestStatusByDay,
+    invitedByDay,
     selectedSector,
     sectorLabel,
     getShiftForDay,

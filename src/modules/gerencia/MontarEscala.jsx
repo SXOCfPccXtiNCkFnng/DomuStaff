@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import {
   Calendar, Users, CheckCircle2, MessageSquare, Clock, Settings, Search,
   Bell, ChevronLeft, ChevronRight, Phone, Plus, ArrowLeft,
@@ -9,7 +9,7 @@ import { useApp } from '../../store/AppContext';
 import {
   GERENCIA_DAYS, GERENCIA_SECTORS, SECTOR_SHIFT, RATE_KIND_LABEL,
   staffNeeded, formatBRL, dailyRateFor, rateKindForDay, dayMapTone,
-  SHIFT_OPTIONS, staffingOptionsFromTech,
+  SHIFT_OPTIONS, staffingOptionsFromTech, shiftTimesMatch, normalizeShiftTime,
 } from '../../lib/constants';
 import Avatar from '../../components/Avatar';
 
@@ -24,6 +24,7 @@ export default function MontarEscala() {
     weekLabel, shiftWeek, GERENCIA_DAYS: weekDays,
     SHIFT_OPTIONS: shiftOptionsFromCtx,
     techSettings, requestStatusByDay, sentBaselineByDay,
+    invitedByDay, freelancerInvites, triggerToast, openDayPicker,
   } = useApp();
 
   const days = weekDays?.length ? weekDays : GERENCIA_DAYS;
@@ -34,13 +35,76 @@ export default function MontarEscala() {
   const weekGuestCounts = days.map((d) => Number(guestCountByDay[d.id]) || 0);
   const staffingOpts = staffingOptionsFromTech(techSettings, weekGuestCounts);
   const dayNeeded = staffNeeded(dayGuests, staffingOpts);
-  const currentDaySelectedIds = selectedFreelancersByDay[selectedGerenciaDay] || [];
-  const currentDaySelectedFreelancers = freelancersList.filter(
-    (f) => currentDaySelectedIds.includes(f.id) && f.sector === selectedSector
-  );
   const shift = getShiftForDay?.(selectedGerenciaDay, selectedSector)
     || SECTOR_SHIFT[selectedSector]
     || '15h – 23h';
+
+  const dayInviteEntries = useMemo(() => {
+    const fromStore = (invitedByDay?.[selectedGerenciaDay] || []).map((e) => (
+      typeof e === 'string' ? { code: e, time: '', status: 'pending' } : e
+    ));
+    const dayIso = currentDayObj?.iso;
+    const fromInvites = (freelancerInvites || [])
+      .filter((inv) => {
+        const st = inv.status || 'pending';
+        if (!['pending', 'accepted', 'declined', 'confirmed'].includes(st)) return false;
+        return (inv.days || []).some((d) => {
+          const iso = typeof d === 'string' ? d.slice(0, 10) : (d?.iso || '').slice(0, 10);
+          return iso && dayIso && iso === dayIso;
+        });
+      })
+      .map((inv) => ({
+        code: inv.professionalId,
+        time: inv.time || '',
+        status: inv.status || 'pending',
+      }));
+    const map = new Map();
+    [...fromStore, ...fromInvites].forEach((e) => {
+      if (!e.code) return;
+      const key = `${e.code}|${normalizeShiftTime(e.time || shift)}`;
+      const prev = map.get(key);
+      if (!prev || (e.status && e.status !== 'pending')) map.set(key, e);
+    });
+    return [...map.values()];
+  }, [invitedByDay, selectedGerenciaDay, freelancerInvites, currentDayObj?.iso, shift]);
+
+  const inviteOnShift = (code) => dayInviteEntries.find(
+    (e) => e.code === code && (!e.time || shiftTimesMatch(e.time, shift)),
+  );
+  const inviteOtherShift = (code) => dayInviteEntries.find(
+    (e) => e.code === code && e.time && !shiftTimesMatch(e.time, shift),
+  );
+  const isLockedOnShift = (code) => {
+    const inv = inviteOnShift(code);
+    return inv && ['pending', 'accepted', 'confirmed'].includes(inv.status || 'pending');
+  };
+  const statusLabel = (code) => {
+    const inv = inviteOnShift(code);
+    if (!inv) return null;
+    if (inv.status === 'accepted' || inv.status === 'confirmed') return { text: 'Aceito', color: '#16A34A' };
+    if (inv.status === 'declined') return { text: 'Recusou', color: '#DC2626' };
+    return { text: 'Convocado', color: '#0066FF' };
+  };
+
+  const currentDaySelectedIds = selectedFreelancersByDay[selectedGerenciaDay] || [];
+  // Escala do turno atual: selecionados livres neste horário + já convocados neste horário
+  const shiftScaleIds = useMemo(() => {
+    const ids = new Set();
+    currentDaySelectedIds.forEach((id) => {
+      const other = inviteOtherShift(id);
+      const lockedOther = other && ['pending', 'accepted', 'confirmed'].includes(other.status || 'pending');
+      if (lockedOther && !inviteOnShift(id)) return;
+      ids.add(id);
+    });
+    dayInviteEntries.forEach((e) => {
+      if (!e.time || shiftTimesMatch(e.time, shift)) ids.add(e.code);
+    });
+    return [...ids];
+  }, [currentDaySelectedIds, dayInviteEntries, shift]);
+
+  const currentDaySelectedFreelancers = freelancersList.filter(
+    (f) => shiftScaleIds.includes(f.id) && f.sector === selectedSector,
+  );
   const selectedCount = currentDaySelectedFreelancers.length;
   const gap = Math.max(0, dayNeeded - selectedCount);
   const alreadySent = ['requested', 'sent', 'confirmed'].includes(requestStatusByDay?.[selectedGerenciaDay]);
@@ -48,7 +112,6 @@ export default function MontarEscala() {
   const selectionKey = currentDaySelectedFreelancers.map((f) => f.id).sort().join('|');
   const baselineKey = sentBaselineByDay?.[`${selectedGerenciaDay}:${selectedSector}`] ?? '';
   const teamChanged = selectionKey !== baselineKey;
-  // Mesma ideia do RH: só envia com gente; se já enviou, só reenvia após mudar a equipe
   const canSend = !dayIsPast && selectedCount > 0 && (!alreadySent || dayReturned || teamChanged);
 
   const filteredFreelancers = freelancersList
@@ -59,14 +122,26 @@ export default function MontarEscala() {
       return f.name.toLowerCase().includes(q) || f.role.toLowerCase().includes(q) || (f.notes || '').toLowerCase().includes(q);
     });
 
-  const isAllSelected = filteredFreelancers.length > 0 && filteredFreelancers.every((f) => currentDaySelectedIds.includes(f.id));
+  const isAllSelected = filteredFreelancers.length > 0 && filteredFreelancers.every((f) => shiftScaleIds.includes(f.id));
+
+  const tryToggle = (id) => {
+    if (dayIsPast) return;
+    if (isLockedOnShift(id) && shiftScaleIds.includes(id)) {
+      triggerToast('Já convocado neste horário. Só pode chamar em outro turno.', 'err');
+      return;
+    }
+    toggleGerenciaFreelancer(id);
+  };
 
   const handleToggleSelectAllDay = (e) => {
     if (e.target.checked) {
-      const allIds = Array.from(new Set([...currentDaySelectedIds, ...filteredFreelancers.map((f) => f.id)]));
+      const unlocked = filteredFreelancers.map((f) => f.id);
+      const allIds = Array.from(new Set([...currentDaySelectedIds, ...unlocked]));
       setSelectedFreelancersByDay((prev) => ({ ...prev, [selectedGerenciaDay]: allIds }));
     } else {
-      const unselectIds = new Set(filteredFreelancers.map((f) => f.id));
+      const unselectIds = new Set(
+        filteredFreelancers.map((f) => f.id).filter((id) => !isLockedOnShift(id)),
+      );
       const remaining = currentDaySelectedIds.filter((id) => !unselectIds.has(id));
       setSelectedFreelancersByDay((prev) => ({ ...prev, [selectedGerenciaDay]: remaining }));
     }
@@ -341,31 +416,44 @@ export default function MontarEscala() {
                         </thead>
                         <tbody>
                           {filteredFreelancers.map(f => {
-                            const isSelected = currentDaySelectedIds.includes(f.id);
+                            const isSelected = shiftScaleIds.includes(f.id);
+                            const locked = isLockedOnShift(f.id);
+                            const badge = statusLabel(f.id);
+                            const other = inviteOtherShift(f.id);
                             return (
                               <tr
                                 key={f.id}
-                                onClick={() => toggleGerenciaFreelancer(f.id)}
+                                onClick={() => tryToggle(f.id)}
                                 style={{
                                   borderBottom: '1px solid #F1F5F9',
                                   background: isSelected ? '#F8FAFC' : 'transparent',
-                                  cursor: 'pointer'
+                                  cursor: locked ? 'default' : 'pointer',
+                                  opacity: other && !isSelected ? 0.85 : 1,
                                 }}
                               >
                                 <td style={{ padding: '10px 16px' }} onClick={(e) => e.stopPropagation()}>
                                   <input
                                     type="checkbox"
                                     checked={isSelected}
-                                    onChange={() => toggleGerenciaFreelancer(f.id)}
-                                    style={{ width: '15px', height: '15px', cursor: 'pointer', accentColor: '#0066FF' }}
+                                    disabled={locked || dayIsPast}
+                                    onChange={() => tryToggle(f.id)}
+                                    style={{ width: '15px', height: '15px', cursor: locked ? 'not-allowed' : 'pointer', accentColor: '#0066FF' }}
                                   />
                                 </td>
                                 <td style={{ padding: '10px 8px' }}>
                                   <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                                     <Avatar src={f.avatar} name={f.name} size={28} />
                                     <div>
-                                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
                                         <span style={{ fontSize: '13px', fontWeight: 500, color: '#0F172A' }}>{f.name}</span>
+                                        {badge && (
+                                          <span style={{ fontSize: '10px', fontWeight: 600, color: badge.color }}>{badge.text}</span>
+                                        )}
+                                        {!badge && other && (
+                                          <span style={{ fontSize: '10px', fontWeight: 500, color: '#64748B' }}>
+                                            Já em {other.time}
+                                          </span>
+                                        )}
                                       </div>
                                       {f.notes ? (
                                         <div style={{ fontSize: '11px', color: '#64748B' }}>{f.notes}</div>
@@ -440,7 +528,10 @@ export default function MontarEscala() {
                             Marque na lista ao lado para montar a escala.
                           </div>
                         ) : (
-                          currentDaySelectedFreelancers.map(f => (
+                          currentDaySelectedFreelancers.map(f => {
+                            const locked = isLockedOnShift(f.id);
+                            const badge = statusLabel(f.id);
+                            return (
                             <div
                               key={f.id}
                               style={{
@@ -455,19 +546,28 @@ export default function MontarEscala() {
                                 <Avatar src={f.avatar} name={f.name} size={28} />
                                 <div>
                                   <div style={{ fontSize: '13px', fontWeight: 500, color: '#0F172A' }}>{f.name}</div>
-                                  <div style={{ fontSize: '11px', color: '#64748B' }}>{f.role}</div>
+                                  <div style={{ fontSize: '11px', color: badge?.color || '#64748B' }}>
+                                    {badge ? `${badge.text} · ${f.role}` : f.role}
+                                  </div>
                                 </div>
                               </div>
-                              <button
-                                type="button"
-                                onClick={() => toggleGerenciaFreelancer(f.id)}
-                                style={{ color: '#94A3B8', padding: '4px', display: 'flex' }}
-                                title="Remover"
-                              >
-                                <X size={14} />
-                              </button>
+                              {locked ? (
+                                <span style={{ fontSize: '10px', fontWeight: 600, color: badge?.color || '#0066FF' }}>
+                                  {badge?.text || 'OK'}
+                                </span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => tryToggle(f.id)}
+                                  style={{ color: '#94A3B8', padding: '4px', display: 'flex' }}
+                                  title="Remover"
+                                >
+                                  <X size={14} />
+                                </button>
+                              )}
                             </div>
-                          ))
+                            );
+                          })
                         )}
                       </div>
                     </div>
@@ -475,7 +575,7 @@ export default function MontarEscala() {
                     <div style={{ background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '2px', padding: '16px' }}>
                       <div style={{ fontSize: '14px', fontWeight: 600, color: '#0F172A', marginBottom: '14px' }}>Resumo</div>
                       {[
-                        { label: 'Pessoas', value: peopleLabel(dayGuests) },
+                        { label: 'Pessoas', value: peopleLabel(selectedCount) },
                         { label: 'Turno', value: shift },
                         { label: 'Meta', value: `${dayNeeded} pessoas` },
                         { label: 'Faltam', value: gap === 0 ? 'Completo' : `${gap} vaga${gap > 1 ? 's' : ''}` },

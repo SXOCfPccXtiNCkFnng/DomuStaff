@@ -1,162 +1,268 @@
-import React from 'react';
-import {
-  Calendar, Users, CheckCircle2, MessageSquare, Clock, Settings, Search,
-  Bell, ChevronLeft, ChevronRight, Phone, Plus, ArrowLeft,
-  Check, Send, RotateCcw, AlertTriangle, Layers, LogOut,
-  Utensils, Wine, ChefHat, Package, Bed, TrendingUp, X, FileText, Menu
-} from 'lucide-react';
+import React, { useMemo, useState } from 'react';
+import { Clock } from 'lucide-react';
 import { useApp } from '../../store/AppContext';
 import {
-  GERENCIA_DAYS, GERENCIA_SECTORS, SECTOR_SHIFT, RATE_KIND_LABEL,
-  staffNeeded, formatBRL, dailyRateFor, rateKindForDay,
+  GERENCIA_DAYS, SECTOR_SHIFT, SHIFT_OPTIONS,
+  staffNeeded, staffingOptionsFromTech, shiftTimesMatch,
 } from '../../lib/constants';
 import Avatar from '../../components/Avatar';
 
 export default function TurnoHoje() {
   const {
-    currentView, setCurrentView, toast, navOpen, setNavOpen, triggerToast,
-    selectedProfile, setSelectedProfile, onboardingData, setOnboardingData, activeUser, hotel,
-    selectedGerenciaDay, setSelectedGerenciaDay, selectedSector, setSelectedSector,
-    gerenciaSearchQuery, setGerenciaSearchQuery,
-    freelancerBaseQuery, setFreelancerBaseQuery, freelancerBaseSector, setFreelancerBaseSector,
-    selectedFreelancersByDay, setSelectedFreelancersByDay,
-    sentDays, returnedByDay, guestCountByDay, dailyRates, rhDay, setRhDay,
-    freelancersList, selectedIds, setSelectedIds, activeTab, setActiveTab,
-    checkedInIds, activeRequest, freelancerInvites, freelancerAgenda,
-    pendingInviteCount, dayPickerFor, setDayPickerFor, dayPickerSelected,
-    returnModalOpen, setReturnModalOpen, returnReason, setReturnReason,
-    toggleGerenciaFreelancer, handleCancelGerenciaSelection, handleSendToRH,
-    openDayPicker, toggleDayPickerDay, confirmDayPicker,
-    handleApproveAndSend, handleReturnToMaitre, confirmReturnToMaitre,
-    toggleSelectOne, confirmPresence, undoPresence, goHome, handleLogout,
-    handleAcceptInvite, handleDeclineInvite, saveAvailability, saveSettings,
-    toggleAvailableDay, toggleAvailableTime, changeAccountField,
-    updateGuestCount, updateDailyRate, techSettings, setTechSettings,
-    onboardingStep, setOnboardingStep, handleFinishOnboarding,
+    selectedSector, guestCountByDay, freelancersList,
+    checkedInIds, confirmPresence, undoPresence,
+    getShiftForDay, GERENCIA_DAYS: weekDays,
+    invitedByDay, freelancerInvites, techSettings,
   } = useApp();
 
-const dayIds = selectedFreelancersByDay.sex?.length
-              ? selectedFreelancersByDay.sex
-              : ['1', '2', '3'];
+  const days = weekDays?.length ? weekDays : GERENCIA_DAYS;
+  const today = days.find((d) => d.isToday) || days.find((d) => !d.isPast) || days[0];
+  const dayId = today?.id;
+  const dayIso = today?.iso;
 
-            const byId = (id) =>
-              freelancersList.find((x) => x.id === id) ||
-              freelancersList.find((x) => x.id === id);
+  const defaultShift = getShiftForDay?.(dayId, selectedSector)
+    || SECTOR_SHIFT[selectedSector]
+    || '15h – 23h';
+  const [shiftFilter, setShiftFilter] = useState('current');
 
-            // Escala do dia + 2 confirmados pelo RH ainda a chegar (demo)
-            const extras = freelancersList.filter(
-              (f) => !dayIds.includes(f.id) && (f.sector === 'restaurante' || f.sector === 'bar')
-            ).slice(0, 2);
+  const activeShift = shiftFilter === 'all'
+    ? null
+    : shiftFilter === 'current'
+      ? defaultShift
+      : (SHIFT_OPTIONS.find((s) => s.id === shiftFilter)?.time || defaultShift);
 
-            const people = [...dayIds.map(byId).filter(Boolean), ...extras].map((f) => {
-              const isIn = checkedInIds.includes(f.id);
-              return {
-                ...f,
-                present: isIn,
-                state: isIn
-                  ? { label: 'Presente', color: '#16A34A', bg: '#F0FDF4' }
-                  : { label: 'Não chegou', color: '#CA8A04', bg: '#FEFCE8' },
-              };
-            });
+  const dayEntries = useMemo(() => {
+    const map = new Map();
+    (invitedByDay?.[dayId] || []).forEach((e) => {
+      const code = typeof e === 'string' ? e : e.code;
+      if (!code) return;
+      map.set(code, {
+        code,
+        time: typeof e === 'string' ? defaultShift : (e.time || defaultShift),
+        status: typeof e === 'string' ? 'pending' : (e.status || 'pending'),
+      });
+    });
+    (freelancerInvites || []).forEach((inv) => {
+      const covers = (inv.days || []).some((d) => {
+        const iso = typeof d === 'string' ? d.slice(0, 10) : (d?.iso || '').slice(0, 10);
+        return iso && dayIso && iso === dayIso;
+      });
+      if (!covers || !inv.professionalId) return;
+      const st = inv.status || 'pending';
+      map.set(inv.professionalId, {
+        code: inv.professionalId,
+        time: inv.time || defaultShift,
+        status: st,
+      });
+    });
+    return [...map.values()];
+  }, [invitedByDay, dayId, freelancerInvites, dayIso, defaultShift]);
 
-            const present = people.filter((p) => p.present).length;
-            const waiting = people.length - present;
-            const guests = guestCountByDay.sex ?? 500;
+  // No salão: quem aceitou (ou ainda pendente). Recusas ficam à parte.
+  const onFloor = dayEntries.filter((e) => {
+    if (e.status === 'declined') return false;
+    if (activeShift && e.time && !shiftTimesMatch(e.time, activeShift)) return false;
+    return e.status === 'accepted' || e.status === 'confirmed' || e.status === 'pending';
+  });
+  const declined = dayEntries.filter((e) => {
+    if (e.status !== 'declined') return false;
+    if (activeShift && e.time && !shiftTimesMatch(e.time, activeShift)) return false;
+    return true;
+  });
 
-            return (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '16px' }}>
-                  <div>
-                    <h1 style={{ fontSize: '22px', fontWeight: 600, color: '#0F172A', letterSpacing: '-0.02em', margin: 0 }}>
-                      Turno de hoje
-                    </h1>
-                    <p style={{ fontSize: '13px', color: '#64748B', margin: '4px 0 0' }}>
-                      Você confirma a presença no salão · Sexta, 19/09 · 15h–23h · {guests} pessoas
-                    </p>
-                  </div>
-                  <span
-                    style={{
-                      fontSize: '11px',
-                      background: '#F0FDF4',
-                      color: '#16A34A',
-                      padding: '4px 10px',
-                      borderRadius: '2px',
-                      fontWeight: 500,
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: '6px',
-                      flexShrink: 0,
-                    }}
-                  >
-                    <span className="live-dot" /> Em andamento
-                  </span>
-                </div>
+  const people = onFloor.map((e) => {
+    const f = freelancersList.find((p) => p.id === e.code);
+    if (!f) return null;
+    const isIn = checkedInIds.includes(f.id);
+    return {
+      ...f,
+      inviteStatus: e.status,
+      time: e.time,
+      present: isIn,
+    };
+  }).filter(Boolean);
 
-                <div style={{ fontSize: '13px', color: '#64748B' }}>
-                  <span style={{ color: '#16A34A', fontWeight: 600 }}>{present}</span> presentes
-                  <span style={{ margin: '0 8px', color: '#CBD5E1' }}>·</span>
-                  <span style={{ color: waiting ? '#CA8A04' : '#64748B', fontWeight: 600 }}>{waiting}</span> aguardando
-                  <span style={{ margin: '0 8px', color: '#CBD5E1' }}>·</span>
-                  {people.length} na escala
-                </div>
+  const present = people.filter((p) => p.present).length;
+  const waiting = people.length - present;
+  const guests = Number(guestCountByDay[dayId]) || 0;
+  const weekGuestCounts = days.map((d) => Number(guestCountByDay[d.id]) || 0);
+  const needed = staffNeeded(guests, staffingOptionsFromTech(techSettings, weekGuestCounts));
+  const shiftLabel = activeShift || 'Todos os turnos';
 
-                <div style={{ background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '2px' }}>
-                  {people.map((f, idx) => (
-                    <div
-                      key={f.id}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        gap: '12px',
-                        padding: '12px 16px',
-                        borderBottom: idx < people.length - 1 ? '1px solid #F1F5F9' : 'none',
-                      }}
-                    >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
-                        <Avatar src={f.avatar} name={f.name} size={32} />
-                        <div style={{ minWidth: 0 }}>
-                          <div style={{ fontSize: '13.5px', fontWeight: 500, color: '#0F172A' }}>{f.name}</div>
-                          <div style={{ fontSize: '12px', color: '#64748B' }}>{f.role}</div>
-                        </div>
-                      </div>
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap' }}>
+        <div>
+          <h1 style={{ fontSize: '22px', fontWeight: 600, color: '#0F172A', letterSpacing: '-0.02em', margin: 0 }}>
+            Turno de hoje
+          </h1>
+          <p style={{ fontSize: '13px', color: '#64748B', margin: '4px 0 0' }}>
+            Confirme a presença · {today?.fullDay || 'hoje'}
+            {today?.date ? `, ${today.date}` : ''} · {shiftLabel} · {guests} pessoas (meta {needed})
+          </p>
+        </div>
+        <span
+          style={{
+            fontSize: '11px',
+            background: '#F0FDF4',
+            color: '#16A34A',
+            padding: '4px 10px',
+            borderRadius: '2px',
+            fontWeight: 500,
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '6px',
+            flexShrink: 0,
+          }}
+        >
+          <span className="live-dot" /> Em andamento
+        </span>
+      </div>
 
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
-                        <span
-                          style={{
-                            fontSize: '11px',
-                            fontWeight: 500,
-                            padding: '3px 8px',
-                            borderRadius: '2px',
-                            background: f.state.bg,
-                            color: f.state.color,
-                          }}
-                        >
-                          {f.state.label}
-                        </span>
-                        {f.present ? (
-                          <button
-                            type="button"
-                            onClick={() => undoPresence(f)}
-                            className="btn-outline"
-                            style={{ padding: '5px 10px', fontSize: '12px', color: '#64748B', borderColor: '#E2E8F0' }}
-                          >
-                            Desfazer
-                          </button>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => confirmPresence(f)}
-                            className="btn-primary"
-                            style={{ padding: '5px 12px', fontSize: '12px' }}
-                          >
-                            Confirmar presença
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  ))}
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px' }}>
+        <span style={{ fontSize: '12px', color: '#64748B', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+          <Clock size={13} /> Horário
+        </span>
+        <button
+          type="button"
+          onClick={() => setShiftFilter('all')}
+          style={{
+            padding: '5px 10px', borderRadius: 4, fontSize: 12, cursor: 'pointer', outline: 'none',
+            border: shiftFilter === 'all' ? '1px solid #0066FF' : '1px solid #E2E8F0',
+            background: shiftFilter === 'all' ? '#0066FF' : '#FFF',
+            color: shiftFilter === 'all' ? '#FFF' : '#64748B',
+            fontWeight: shiftFilter === 'all' ? 600 : 500,
+          }}
+        >
+          Todos
+        </button>
+        <button
+          type="button"
+          onClick={() => setShiftFilter('current')}
+          style={{
+            padding: '5px 10px', borderRadius: 4, fontSize: 12, cursor: 'pointer', outline: 'none',
+            border: shiftFilter === 'current' ? '1px solid #0066FF' : '1px solid #E2E8F0',
+            background: shiftFilter === 'current' ? '#0066FF' : '#FFF',
+            color: shiftFilter === 'current' ? '#FFF' : '#64748B',
+            fontWeight: shiftFilter === 'current' ? 600 : 500,
+          }}
+        >
+          Turno da escala · {defaultShift}
+        </button>
+        {SHIFT_OPTIONS.map((opt) => {
+          const on = shiftFilter === opt.id;
+          return (
+            <button
+              key={opt.id}
+              type="button"
+              onClick={() => setShiftFilter(opt.id)}
+              style={{
+                padding: '5px 10px', borderRadius: 4, fontSize: 12, cursor: 'pointer', outline: 'none',
+                border: on ? '1px solid #0066FF' : '1px solid #E2E8F0',
+                background: on ? '#0066FF' : '#FFF',
+                color: on ? '#FFF' : '#64748B',
+                fontWeight: on ? 600 : 500,
+              }}
+            >
+              {opt.label} · {opt.time}
+            </button>
+          );
+        })}
+      </div>
+
+      <div style={{ fontSize: '13px', color: '#64748B' }}>
+        <span style={{ color: '#16A34A', fontWeight: 600 }}>{present}</span> presentes
+        <span style={{ margin: '0 8px', color: '#CBD5E1' }}>·</span>
+        <span style={{ color: waiting ? '#CA8A04' : '#64748B', fontWeight: 600 }}>{waiting}</span> aguardando
+        <span style={{ margin: '0 8px', color: '#CBD5E1' }}>·</span>
+        {people.length} na escala
+        {declined.length > 0 && (
+          <>
+            <span style={{ margin: '0 8px', color: '#CBD5E1' }}>·</span>
+            <span style={{ color: '#DC2626', fontWeight: 600 }}>{declined.length}</span> recusou
+          </>
+        )}
+      </div>
+
+      <div style={{ background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '2px' }}>
+        {people.length === 0 ? (
+          <div style={{ padding: '28px 16px', textAlign: 'center', fontSize: 13, color: '#64748B' }}>
+            Ninguém confirmado neste horário. Quem recusou não entra na lista do salão.
+          </div>
+        ) : people.map((f, idx) => (
+          <div
+            key={f.id}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '12px',
+              padding: '12px 16px',
+              borderBottom: idx < people.length - 1 ? '1px solid #F1F5F9' : 'none',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
+              <Avatar src={f.avatar} name={f.name} size={32} />
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: '13.5px', fontWeight: 500, color: '#0F172A' }}>{f.name}</div>
+                <div style={{ fontSize: '12px', color: '#64748B' }}>
+                  {f.role} · {f.time}
+                  {f.inviteStatus === 'pending' ? ' · aguardando resposta' : ''}
                 </div>
               </div>
+            </div>
+            <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+              {f.present ? (
+                <button
+                  type="button"
+                  className="btn-outline"
+                  style={{ padding: '6px 10px', fontSize: 12 }}
+                  onClick={() => undoPresence(f)}
+                >
+                  Desfazer
+                </button>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    style={{
+                      padding: '6px 10px', fontSize: 12, border: 'none', background: 'transparent',
+                      color: '#64748B', cursor: 'pointer', fontWeight: 500,
+                    }}
+                    onClick={() => { /* marca só visualmente como não chegou — mantém aguardando */ }}
+                  >
+                    Não chegou
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    style={{ padding: '6px 10px', fontSize: 12 }}
+                    onClick={() => confirmPresence(f)}
+                  >
+                    Confirmar presença
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {declined.length > 0 && (
+        <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 2, padding: '12px 14px' }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: '#991B1B', marginBottom: 8 }}>
+            Recusaram — chame substituto na Montar escala
+          </div>
+          {declined.map((e) => {
+            const f = freelancersList.find((p) => p.id === e.code);
+            return (
+              <div key={e.code} style={{ fontSize: 12, color: '#7F1D1D', padding: '4px 0' }}>
+                {f?.name || e.code} · {e.time}
+              </div>
             );
+          })}
+        </div>
+      )}
+    </div>
+  );
 }
