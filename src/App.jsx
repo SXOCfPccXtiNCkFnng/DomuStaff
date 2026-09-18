@@ -71,7 +71,7 @@ function Router() {
           onChangeAccount={changeAccountField}
           userName={activeUser.name}
           userRole={activeUser.role}
-          defaultSector={selectedSector}
+          defaultSector={techSettings.defaultSector || selectedSector}
           hotel={hotel}
           freelancersCount={freelancersList?.length || 0}
           managementTeam={managementTeam || []}

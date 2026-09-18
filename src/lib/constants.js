@@ -164,6 +164,48 @@ export const GERENCIA_SECTORS = [
   { id: 'cdc', label: 'CDC', icon: Package },
 ];
 
+/** Normaliza id ou label de setor para o id canônico. */
+export function normalizeSectorId(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  if (!raw) return '';
+  const byId = GERENCIA_SECTORS.find((s) => s.id === raw);
+  if (byId) return byId.id;
+  const byLabel = GERENCIA_SECTORS.find((s) => s.label.toLowerCase() === raw);
+  if (byLabel) return byLabel.id;
+  // acentos / aliases
+  const aliases = {
+    recepção: 'recepcao',
+    governança: 'governanca',
+    restaurante: 'restaurante',
+    bar: 'bar',
+    cozinha: 'cozinha',
+    cdc: 'cdc',
+  };
+  return aliases[raw] || raw.normalize('NFD').replace(/\p{M}/gu, '').replace(/\s+/g, '') || '';
+}
+
+export function sectorLabelFromId(sectorId) {
+  const id = normalizeSectorId(sectorId);
+  return GERENCIA_SECTORS.find((s) => s.id === id)?.label || sectorId || '—';
+}
+
+/** Lista de setores em que o profissional pode atuar (sempre ≥ 1). */
+export function freelancerSectors(f) {
+  if (!f) return ['restaurante'];
+  const fromArr = Array.isArray(f.sectors)
+    ? f.sectors.map(normalizeSectorId).filter(Boolean)
+    : [];
+  if (fromArr.length) return [...new Set(fromArr)];
+  const one = normalizeSectorId(f.sector) || 'restaurante';
+  return [one];
+}
+
+export function freelaInSector(f, sectorId) {
+  const sid = normalizeSectorId(sectorId);
+  if (!sid) return true;
+  return freelancerSectors(f).includes(sid);
+}
+
 export const DAILY_RATES = [
   { role: 'Garçom', week: 180, weekend: 220, holiday: 270 },
   { role: 'Bartender', week: 200, weekend: 250, holiday: 300 },

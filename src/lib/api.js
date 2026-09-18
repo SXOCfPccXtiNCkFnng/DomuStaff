@@ -2,7 +2,7 @@ import { supabase, isSupabaseConfigured } from './supabase';
 import { readDb, writeDb } from './localStore';
 import {
   GERENCIA_DAYS, HOTEL_ID, formatInviteDays, inviteDateSummary, dayByIso, SECTOR_SHIFT,
-  dailyRateFor, rateKindForDay, shiftTimesMatch,
+  dailyRateFor, rateKindForDay, shiftTimesMatch, normalizeSectorId,
 } from './constants';
 
 function mapStaffMember(p) {
@@ -759,12 +759,16 @@ export async function loadHotelData(account) {
     const profilePhoto = Array.isArray(p.profiles)
       ? p.profiles[0]?.photo_url
       : p.profiles?.photo_url;
+    const sectorsRaw = Array.isArray(p.sectors) && p.sectors.length
+      ? p.sectors
+      : (p.sector ? [p.sector] : ['restaurante']);
     return {
       id: p.code,
       uuid: p.id,
       name: p.name,
       role: p.role,
-      sector: p.sector,
+      sector: p.sector || sectorsRaw[0] || 'restaurante',
+      sectors: sectorsRaw,
       status: p.status,
       notes: p.notes || '',
       dailyRate: 180,
@@ -853,7 +857,7 @@ export async function loadHotelData(account) {
     const iso = raw.slice(0, 10);
     return dayByIso(iso) || dayByIso(raw) || GERENCIA_DAYS.find((d) => d.iso === iso || d.iso === raw) || null;
   };
-  const pushInvited = (code, time, iso, status = 'pending') => {
+  const pushInvited = (code, time, iso, status = 'pending', sector = '') => {
     const day = resolveDay(iso);
     if (!day || !code) return;
     let t = (time && time !== '—') ? String(time) : '';
@@ -865,6 +869,7 @@ export async function loadHotelData(account) {
         t = bySector;
       }
     }
+    const sec = normalizeSectorId(sector) || '';
     const list = invitedByDay[day.id];
     const same = list.findIndex((e) => e.code === code && (!t || !e.time || shiftTimesMatch(e.time, t)));
     if (same >= 0) {
@@ -873,10 +878,11 @@ export async function loadHotelData(account) {
         code,
         time: t || prev.time || '',
         status: status || prev.status || 'pending',
+        sector: sec || prev.sector || '',
       };
       return;
     }
-    list.push({ code, time: t, status: status || 'pending' });
+    list.push({ code, time: t, status: status || 'pending', sector: sec });
   };
 
   if (account.role !== 'freelancer') {
@@ -887,7 +893,7 @@ export async function loadHotelData(account) {
       // pending / accepted / declined / confirmed — recusado continua visível pro RH
       if (!['pending', 'accepted', 'declined', 'confirmed'].includes(st)) return;
       const dayList = Array.isArray(row.days) ? row.days : [];
-      dayList.forEach((iso) => pushInvited(code, row.time || '', iso, st));
+      dayList.forEach((iso) => pushInvited(code, row.time || '', iso, st, row.sector || ''));
     });
 
     // Se todos os convites do dia foram aceitos, marca a escala como confirmada na UI
@@ -1551,4 +1557,46 @@ export async function uploadPhoto(accountId, dataUrl) {
   const { data } = supabase.storage.from('avatars').getPublicUrl(path);
   await saveProfile(accountId, { photoUrl: data.publicUrl });
   return data.publicUrl;
+}
+
+/** Atualiza setores em que o freelancer pode atuar (primeiro = principal). */
+export async function updateProfessionalSectors({ hotelId, profileId, professionalCode, sectors }) {
+  const list = [...new Set((sectors || []).map((s) => String(s).trim()).filter(Boolean))];
+  if (!list.length) throw new Error('Selecione ao menos um setor.');
+  const primary = list[0];
+
+  if (!isSupabaseConfigured) {
+    const db = readDb();
+    db.professionals = (db.professionals || []).map((p) => {
+      const match = (professionalCode && p.id === professionalCode)
+        || (profileId && p.profile_id === profileId && (!hotelId || p.hotel_id === hotelId));
+      if (!match) return p;
+      return { ...p, sector: primary, sectors: list };
+    });
+    writeDb(db);
+    return { sector: primary, sectors: list };
+  }
+
+  let q = supabase.from('professionals').update({
+    sector: primary,
+    sectors: list,
+    updated_at: new Date().toISOString(),
+  });
+  if (professionalCode) q = q.eq('code', professionalCode);
+  if (hotelId) q = q.eq('hotel_id', hotelId);
+  if (profileId) q = q.eq('profile_id', profileId);
+  const { error } = await q;
+  if (error) {
+    // Coluna sectors pode ainda não existir — tenta só sector
+    if (/sectors|column/i.test(error.message || '')) {
+      const { error: e2 } = await supabase.from('professionals').update({
+        sector: primary,
+        updated_at: new Date().toISOString(),
+      }).eq('profile_id', profileId).eq('hotel_id', hotelId || HOTEL_ID);
+      if (e2) throw new Error(e2.message);
+      return { sector: primary, sectors: list };
+    }
+    throw new Error(error.message);
+  }
+  return { sector: primary, sectors: list };
 }

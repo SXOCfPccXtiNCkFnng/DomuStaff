@@ -9,6 +9,7 @@ import { useApp } from '../../store/AppContext';
 import {
   GERENCIA_DAYS, GERENCIA_SECTORS, SECTOR_SHIFT, RATE_KIND_LABEL,
   staffNeeded, formatBRL, dailyRateFor, rateKindForDay,
+  freelaInSector, freelancerSectors, sectorLabelFromId,
 } from '../../lib/constants';
 import Avatar from '../../components/Avatar';
 
@@ -37,7 +38,7 @@ export default function FreelancersList() {
 
 const q = freelancerBaseQuery.trim().toLowerCase();
             const list = freelancersList.filter((f) => {
-              if (freelancerBaseSector !== 'todos' && f.sector !== freelancerBaseSector) return false;
+              if (freelancerBaseSector !== 'todos' && !freelaInSector(f, freelancerBaseSector)) return false;
               if (!q) return true;
               return (
                 f.name.toLowerCase().includes(q) ||
@@ -45,7 +46,6 @@ const q = freelancerBaseQuery.trim().toLowerCase();
                 (f.notes || '').toLowerCase().includes(q)
               );
             });
-            const sectorLabel = (id) => GERENCIA_SECTORS.find((s) => s.id === id)?.label || id;
             const showRates = selectedProfile === 'rh';
             const rateKind = rateKindForDay('sex');
 
@@ -152,7 +152,9 @@ const q = freelancerBaseQuery.trim().toLowerCase();
                             </div>
                           </td>
                           <td style={{ padding: '10px 8px', color: '#64748B' }}>{f.role}</td>
-                          <td style={{ padding: '10px 8px', color: '#64748B' }}>{sectorLabel(f.sector)}</td>
+                          <td style={{ padding: '10px 8px', color: '#64748B' }}>
+                            {freelancerSectors(f).map(sectorLabelFromId).join(', ')}
+                          </td>
                           {showRates && (
                             <td style={{ padding: '10px 8px', fontWeight: 500, color: '#0F172A' }}>
                               {formatBRL(dailyRateFor(f.role, rateKind, dailyRates))}

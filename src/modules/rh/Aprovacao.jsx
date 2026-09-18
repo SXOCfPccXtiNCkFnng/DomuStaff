@@ -6,7 +6,7 @@ import { useApp } from '../../store/AppContext';
 import {
   GERENCIA_DAYS, GERENCIA_SECTORS, SECTOR_SHIFT, RATE_KIND_LABEL, SHIFT_OPTIONS,
   staffNeeded, formatBRL, dailyRateFor, rateKindForDay,
-  staffingOptionsFromTech, shiftTimesMatch,
+  staffingOptionsFromTech, shiftTimesMatch, freelaInSector, sectorLabelFromId,
 } from '../../lib/constants';
 import Avatar from '../../components/Avatar';
 
@@ -35,6 +35,7 @@ export default function Aprovacao() {
   const sectorId = GERENCIA_SECTORS.find((s) => s.label === activeRequest?.department)?.id
     || freelancersList.find((f) => dayCodes.includes(f.id))?.sector
     || selectedSector;
+  const sectorTitle = sectorLabelFromId(sectorId) || activeRequest?.department || 'Restaurante';
   const shift = activeRequest?.shift
     || getShiftForDay?.(rhDay, sectorId)
     || SECTOR_SHIFT[sectorId]
@@ -112,11 +113,13 @@ export default function Aprovacao() {
   };
 
   const pendingTeam = freelancersList.filter((f) => {
+    if (!freelaInSector(f, sectorId)) return false;
     if (!selectedIds.includes(f.id) || invitedSet.has(f.id)) return false;
     if (shiftFilter === 'all') return true;
     return shiftTimesMatch(shift, filterTime);
   });
   const sentPeople = freelancersList.filter((f) => {
+    if (!freelaInSector(f, sectorId) && !invitedSet.has(f.id)) return false;
     if (!invitedSet.has(f.id)) return false;
     const st = inviteStatusByCode[f.id];
     if (st === 'declined') return false;
@@ -127,7 +130,7 @@ export default function Aprovacao() {
     return matchesFilterTime(inviteTimeByCode[f.id] || []);
   });
   const sentPeopleAll = freelancersList.filter((f) => invitedSet.has(f.id) && inviteStatusByCode[f.id] !== 'declined');
-  const outside = freelancersList.filter((f) => !selectedIds.includes(f.id) && !invitedSet.has(f.id));
+  const outside = freelancersList.filter((f) => freelaInSector(f, sectorId) && !selectedIds.includes(f.id) && !invitedSet.has(f.id));
 
   const visibleList = (
     activeTab === 'enviados' ? sentPeople
@@ -179,9 +182,22 @@ export default function Aprovacao() {
 
       <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap' }}>
         <div>
-          <h1 className="page-title">Aprovar escala</h1>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '6px' }}>
+            <h1 className="page-title" style={{ margin: 0 }}>Aprovar escala</h1>
+            <span style={{
+              fontSize: '12px',
+              fontWeight: 700,
+              color: '#0066FF',
+              background: '#EBF3FF',
+              border: '1px solid #BFDBFE',
+              padding: '4px 10px',
+              borderRadius: '4px',
+            }}>
+              {sectorTitle}
+            </span>
+          </div>
           <p className="page-sub">
-            {activeRequest.department || 'Restaurante'} · {dayObj?.fullDay} · turno {shift} · diária de {RATE_KIND_LABEL[rateKind].toLowerCase()}
+            {dayObj?.fullDay} · turno {shift} · diária de {RATE_KIND_LABEL[rateKind].toLowerCase()}
             {alreadySent ? ' · convites já enviados' : ''}
           </p>
         </div>

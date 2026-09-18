@@ -4,6 +4,7 @@ import {
   SHIFT_OPTIONS, defaultShiftForSector,
   formatInviteDays, inviteDateSummary, dailyRateFor, rateKindForDay, initialsFrom,
   buildWeekDays, setGerenciaDays, formatWeekRangeLabel, shiftTimesMatch,
+  normalizeSectorId, freelaInSector, freelancerSectors, sectorLabelFromId,
 } from '../lib/constants';
 import * as api from '../lib/api';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
@@ -132,6 +133,7 @@ export function AppProvider({ children }) {
       whatsappNotifications: true,
       emergencyAlerts: true,
       photoUrl: '',
+      sectors: ['restaurante'],
     };
   });
   const [currentView, setCurrentView] = useState(() => (parseJoinInviteFromUrl() ? 'register' : 'login'));
@@ -155,6 +157,7 @@ export function AppProvider({ children }) {
   const [navOpen, setNavOpen] = useState(false);
   const [selectedGerenciaDay, setSelectedGerenciaDay] = useState(() => buildWeekDays(0).find((d) => d.isToday)?.id || 'seg');
   const [selectedSector, setSelectedSector] = useState('restaurante');
+  const [rhSectorFilter, setRhSectorFilter] = useState('all');
   const [shiftByDay, setShiftByDay] = useState({});
   const [gerenciaSearchQuery, setGerenciaSearchQuery] = useState('');
   const [freelancerBaseQuery, setFreelancerBaseQuery] = useState('');
@@ -333,7 +336,10 @@ export function AppProvider({ children }) {
       const codes = data.selectedByDay?.[dayId] || [];
       GERENCIA_SECTORS.forEach((sec) => {
         const sectorCodes = codes
-          .filter((id) => (data.professionals || []).find((p) => p.id === id)?.sector === sec.id)
+          .filter((id) => {
+            const p = (data.professionals || []).find((x) => x.id === id);
+            return freelaInSector(p, sec.id);
+          })
           .sort();
         baseline[`${dayId}:${sec.id}`] = sectorCodes.join('|');
       });
@@ -409,7 +415,12 @@ export function AppProvider({ children }) {
       whatsappNotifications: acc.settings?.whatsappNotifications !== false,
       emergencyAlerts: acc.settings?.emergencyAlerts !== false,
       photoUrl: acc.photoUrl || '',
+      sectors: Array.isArray(acc.settings?.sectors) && acc.settings.sectors.length
+        ? acc.settings.sectors
+        : ['restaurante'],
     });
+    const defSector = normalizeSectorId(acc.settings?.defaultSector);
+    if (defSector) setSelectedSector(defSector);
     setTechSettings((prev) => {
       const fromAcc = Array.isArray(acc.settings?.connectedEstablishments)
         ? acc.settings.connectedEstablishments
@@ -425,6 +436,16 @@ export function AppProvider({ children }) {
     });
     const data = await api.loadHotelData(acc);
     applyHotelData(data);
+    if (acc.role === 'freelancer') {
+      const me = (data.professionals || []).find((p) =>
+        (acc.id && p.profileId === acc.id)
+        || (acc.professionalCode && p.id === acc.professionalCode),
+      );
+      if (me) {
+        const secs = freelancerSectors(me);
+        setOnboardingData((prev) => ({ ...prev, sectors: secs }));
+      }
+    }
     if ((data.hotel?.id || data.hotel?.code || data.hotel?.name) && acc.role !== 'freelancer') {
       setTechSettings((prev) => {
         const list = Array.isArray(prev.connectedEstablishments) ? prev.connectedEstablishments : [];
@@ -978,7 +999,8 @@ export function AppProvider({ children }) {
     const allCodes = [...(nextByDay[dayId] || [])];
     const professionalCodes = allCodes.filter((code) => {
       const f = freelancersList.find((p) => p.id === code);
-      return !f?.sector || f.sector === sector;
+      if (!f) return false;
+      return freelaInSector(f, sector);
     });
     persistDraft._pending = {
       hotelId: account?.hotelId,
@@ -1036,13 +1058,33 @@ export function AppProvider({ children }) {
       const current = prev[selectedGerenciaDay] || [];
       const remaining = current.filter((id) => {
         const f = freelancersList.find((p) => p.id === id);
-        return f && f.sector !== selectedSector;
+        return f && !freelaInSector(f, selectedSector);
       });
       const next = { ...prev, [selectedGerenciaDay]: remaining };
       persistDraft(next);
       return next;
     });
     triggerToast('Seleção de freelancers para este dia cancelada.');
+  };
+
+  /** Quem já foi chamado (pending/aceito) em outro setor neste dia — primeiro setor ganha. */
+  const claimedByOtherSector = (code, dayId = selectedGerenciaDay, sectorId = selectedSector) => {
+    const sid = normalizeSectorId(sectorId);
+    const entries = invitedByDay[dayId] || [];
+    for (const e of entries) {
+      const c = typeof e === 'string' ? e : e.code;
+      if (c !== code) continue;
+      const st = typeof e === 'string' ? 'pending' : (e.status || 'pending');
+      if (!['pending', 'accepted', 'confirmed'].includes(st)) continue;
+      const eSec = normalizeSectorId(typeof e === 'string' ? '' : e.sector);
+      if (eSec && eSec !== sid) return eSec;
+      if (!eSec) {
+        const f = freelancersList.find((p) => p.id === code);
+        const primary = normalizeSectorId(f?.sector) || 'restaurante';
+        if (primary !== sid) return primary;
+      }
+    }
+    return null;
   };
 
   const handleSendToRH = async () => {
@@ -1053,7 +1095,7 @@ export function AppProvider({ children }) {
     }
     const codes = (selectedFreelancersByDay[selectedGerenciaDay] || []).filter((id) => {
       const f = freelancersList.find((p) => p.id === id);
-      return f?.sector === selectedSector;
+      return freelaInSector(f, selectedSector);
     });
     const shiftLabel = getShiftForDay(selectedGerenciaDay, selectedSector);
     const alreadyForShift = new Set(
@@ -1061,17 +1103,22 @@ export function AppProvider({ children }) {
         .filter((e) => {
           const st = typeof e === 'string' ? 'pending' : (e.status || 'pending');
           if (!['pending', 'accepted', 'confirmed'].includes(st)) return false;
+          const eSec = normalizeSectorId(typeof e === 'string' ? '' : e.sector);
+          if (eSec && eSec !== selectedSector) return false;
           const t = typeof e === 'string' ? '' : (e.time || '');
           return !t || shiftTimesMatch(t, shiftLabel);
         })
         .map((e) => (typeof e === 'string' ? e : e.code)),
     );
-    const freshCodes = codes.filter((id) => !alreadyForShift.has(id));
+    const claimedOther = codes.filter((id) => claimedByOtherSector(id));
+    const freshCodes = codes.filter((id) => !alreadyForShift.has(id) && !claimedByOtherSector(id));
     if (!freshCodes.length) {
       triggerToast(
-        alreadyForShift.size
-          ? 'Esses profissionais já foram convocados neste horário. Troque o turno ou chame outra pessoa.'
-          : 'Selecione ao menos um profissional antes de enviar ao RH.',
+        claimedOther.length
+          ? `Já convocados por outro setor neste dia (${sectorLabelFromId(claimedByOtherSector(claimedOther[0]))}). O setor que chama primeiro fica com a pessoa.`
+          : alreadyForShift.size
+            ? 'Esses profissionais já foram convocados neste horário. Troque o turno ou chame outra pessoa.'
+            : 'Selecione ao menos um profissional antes de enviar ao RH.',
         'err',
       );
       return;
@@ -1104,8 +1151,9 @@ export function AppProvider({ children }) {
         const list = next[selectedGerenciaDay] ? [...next[selectedGerenciaDay]] : [];
         freshCodes.forEach((code) => {
           if (!list.some((e) => (typeof e === 'string' ? e : e.code) === code
-            && shiftTimesMatch(typeof e === 'string' ? shiftLabel : (e.time || shiftLabel), shiftLabel))) {
-            list.push({ code, time: shiftLabel, status: 'pending' });
+            && shiftTimesMatch(typeof e === 'string' ? shiftLabel : (e.time || shiftLabel), shiftLabel)
+            && normalizeSectorId(typeof e === 'string' ? selectedSector : (e.sector || selectedSector)) === selectedSector)) {
+            list.push({ code, time: shiftLabel, status: 'pending', sector: selectedSector });
           }
         });
         next[selectedGerenciaDay] = list;
@@ -1303,6 +1351,14 @@ export function AppProvider({ children }) {
         connectedEstablishments: Array.isArray(techSettings.connectedEstablishments)
           ? techSettings.connectedEstablishments
           : [],
+        defaultSector: role === 'gerencia'
+          ? (normalizeSectorId(techSettings.defaultSector || selectedSector) || 'restaurante')
+          : techSettings.defaultSector,
+        sectors: role === 'freelancer'
+          ? (Array.isArray(onboardingData.sectors) && onboardingData.sectors.length
+            ? onboardingData.sectors
+            : ['restaurante'])
+          : techSettings.sectors,
       };
 
       await api.saveProfile(account.id, {
@@ -1318,6 +1374,28 @@ export function AppProvider({ children }) {
           : onboardingData.hotelOrRole,
         settings: nextSettings,
       });
+
+      if (role === 'gerencia' && nextSettings.defaultSector) {
+        setSelectedSector(nextSettings.defaultSector);
+      }
+
+      if (role === 'freelancer' && account.hotelId) {
+        try {
+          await api.updateProfessionalSectors({
+            hotelId: account.hotelId,
+            profileId: account.id,
+            professionalCode: account.professionalCode,
+            sectors: nextSettings.sectors,
+          });
+          setFreelancersList((prev) => prev.map((p) => (
+            p.profileId === account.id || p.id === account.professionalCode
+              ? { ...p, sector: nextSettings.sectors[0], sectors: nextSettings.sectors }
+              : p
+          )));
+        } catch (err) {
+          console.warn(err);
+        }
+      }
       setAccount((prev) => prev ? {
         ...prev,
         name: onboardingData.name,
@@ -1708,7 +1786,7 @@ export function AppProvider({ children }) {
     notifications, pushNotification, markNotificationRead, markAllNotificationsRead,
     notifPanelTick, requestOpenNotifPanel,
     selectedGerenciaDay, setSelectedGerenciaDay,
-    selectedSector, setSelectedSector,
+    selectedSector, setSelectedSector, rhSectorFilter, setRhSectorFilter,
     shiftByDay, getShiftForDay, setShiftForDay,
     gerenciaSearchQuery, setGerenciaSearchQuery,
     freelancerBaseQuery, setFreelancerBaseQuery,
@@ -1726,6 +1804,7 @@ export function AppProvider({ children }) {
     handleLoginSubmit, signInWith, handleRegisterSubmit, handleFinishOnboarding, handleLogout,
     updateGuestCount, persistOccupancyDay, updateDailyRate,
     toggleGerenciaFreelancer, handleCancelGerenciaSelection, handleSendToRH,
+    claimedByOtherSector,
     handleAcceptInvite, handleDeclineInvite, saveAvailability,
     openDayPicker, toggleDayPickerDay, confirmDayPicker,
     toggleAvailableDay, toggleAvailableTime,

@@ -33,6 +33,7 @@ export default function Kanban() {
     selectedFreelancersByDay, freelancersList, sentDays, returnedByDay,
     techSettings, getShiftForDay, setActiveRequest, requestStatusByDay,
     invitedByDay, freelancerInvites,
+    rhSectorFilter, setRhSectorFilter,
   } = useApp();
 
   const days = weekDays?.length ? weekDays : GERENCIA_DAYS;
@@ -115,7 +116,10 @@ export default function Kanban() {
       const st = typeof e === 'string' ? 'pending' : (e.status || 'pending');
       const f = freelancersList.find((p) => p.id === code);
       if (!f && !code) return;
-      const secId = f?.sector || 'restaurante';
+      if (dayInvites.some((inv) => inv.professionalId === code)) return;
+      const secId = sectorIdFromLabel(typeof e === 'object' ? e.sector : '')
+        || f?.sector
+        || 'restaurante';
       const card = ensure(secId, {
         role: f?.role,
         shift: (typeof e === 'object' && e.time) || getShiftForDay?.(rhDay, secId),
@@ -123,17 +127,28 @@ export default function Kanban() {
       if (code && !card.codes.has(code)) {
         card.codes.add(code);
         card.people += 1;
-        if (st === 'accepted' || st === 'confirmed') card.accepted += 1;
-        else if (st === 'declined') card.declined += 1;
-        else card.pending += 1;
       }
+      if (st === 'accepted' || st === 'confirmed') card.accepted += 1;
+      else if (st === 'declined') card.declined += 1;
+      else card.pending += 1;
     });
 
-    return Object.values(map).map(({ codes, ...rest }) => rest).filter((c) => c.people > 0);
+    return Object.values(map)
+      .filter((c) => c.people > 0)
+      .map((c) => ({
+        ...c,
+        codes: [...c.codes],
+        cost: [...c.codes].reduce((sum, code) => {
+          const f = freelancersList.find((p) => p.id === code);
+          return sum + dailyRateFor(f?.role || c.role, rhKind, dailyRates);
+        }, 0),
+      }));
   }, [
-    selectedFreelancersByDay, rhDay, freelancersList, dayInvites,
-    invitedEntries, getShiftForDay,
+    selectedFreelancersByDay, rhDay, freelancersList, dayInvites, invitedEntries,
+    getShiftForDay, rhKind, dailyRates,
   ]);
+
+  const matchSector = (card) => rhSectorFilter === 'all' || card.sectorId === rhSectorFilter;
 
   const status = requestStatusByDay?.[rhDay];
   const isReturned = Boolean(returnedByDay[rhDay]);
@@ -141,10 +156,10 @@ export default function Kanban() {
   const isRequested = !isReturned && (status === 'requested' || (!status && sectorCards.length > 0 && !sentDays[rhDay] && !hasInvites));
   const isSentToFreelas = status === 'sent' || status === 'confirmed' || hasInvites || (!!sentDays[rhDay] && !isReturned && status !== 'requested');
 
-  const solicitadas = isRequested && !isReturned ? sectorCards : [];
+  const solicitadas = (isRequested && !isReturned ? sectorCards : []).filter(matchSector);
 
   // Enviadas: ainda há pendente de resposta
-  const enviadas = (!isReturned && isSentToFreelas)
+  const enviadas = ((!isReturned && isSentToFreelas)
     ? sectorCards
       .filter((c) => c.pending > 0 || (c.accepted === 0 && c.declined === 0 && status === 'sent'))
       .map((c) => ({
@@ -153,11 +168,12 @@ export default function Kanban() {
           ? `${c.pending} aguardando · ${c.accepted} aceito${c.accepted === 1 ? '' : 's'}`
           : `${c.people} na lista`,
       }))
-    : [];
+    : []).filter(matchSector);
 
   // Confirmadas: aceitos sem pendência e sem recusa no mesmo card
   const confirmadas = sectorCards
     .filter((c) => c.accepted > 0 && c.pending === 0 && c.declined === 0)
+    .filter(matchSector)
     .map((c) => ({
       ...c,
       progress: `${c.accepted} confirmado${c.accepted === 1 ? '' : 's'}`,
@@ -166,6 +182,7 @@ export default function Kanban() {
   // Pendências: devolvida OU recusas precisando substituto
   const pendenciasFromDecline = sectorCards
     .filter((c) => c.declined > 0)
+    .filter(matchSector)
     .map((c) => ({
       ...c,
       progress: c.accepted
@@ -174,7 +191,7 @@ export default function Kanban() {
       alert: true,
     }));
   const pendenciasFromReturn = isReturned
-    ? sectorCards.map((c) => ({
+    ? sectorCards.filter(matchSector).map((c) => ({
       ...c,
       progress: returnedByDay[rhDay]?.reason || 'Devolvida',
       alert: true,
@@ -319,6 +336,47 @@ export default function Kanban() {
                 {label}
               </div>
             </div>
+          );
+        })}
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+        <button
+          type="button"
+          onClick={() => setRhSectorFilter('all')}
+          style={{
+            padding: '6px 12px',
+            borderRadius: '4px',
+            border: rhSectorFilter === 'all' ? '1px solid #0066FF' : '1px solid #E2E8F0',
+            background: rhSectorFilter === 'all' ? '#EBF3FF' : '#FFFFFF',
+            color: rhSectorFilter === 'all' ? '#0066FF' : '#64748B',
+            fontSize: '12px',
+            fontWeight: rhSectorFilter === 'all' ? 600 : 500,
+            cursor: 'pointer',
+          }}
+        >
+          Todos os setores
+        </button>
+        {GERENCIA_SECTORS.map((sec) => {
+          const on = rhSectorFilter === sec.id;
+          return (
+            <button
+              key={sec.id}
+              type="button"
+              onClick={() => setRhSectorFilter(sec.id)}
+              style={{
+                padding: '6px 12px',
+                borderRadius: '4px',
+                border: on ? '1px solid #0066FF' : '1px solid #E2E8F0',
+                background: on ? '#EBF3FF' : '#FFFFFF',
+                color: on ? '#0066FF' : '#64748B',
+                fontSize: '12px',
+                fontWeight: on ? 600 : 500,
+                cursor: 'pointer',
+              }}
+            >
+              {sec.label}
+            </button>
           );
         })}
       </div>

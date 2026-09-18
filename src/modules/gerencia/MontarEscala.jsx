@@ -10,6 +10,7 @@ import {
   GERENCIA_DAYS, GERENCIA_SECTORS, SECTOR_SHIFT, RATE_KIND_LABEL,
   staffNeeded, formatBRL, dailyRateFor, rateKindForDay, dayMapTone,
   SHIFT_OPTIONS, staffingOptionsFromTech, shiftTimesMatch, normalizeShiftTime,
+  freelaInSector, normalizeSectorId, sectorLabelFromId,
 } from '../../lib/constants';
 import Avatar from '../../components/Avatar';
 
@@ -25,6 +26,7 @@ export default function MontarEscala() {
     SHIFT_OPTIONS: shiftOptionsFromCtx,
     techSettings, requestStatusByDay, sentBaselineByDay,
     invitedByDay, freelancerInvites, triggerToast, openDayPicker,
+    claimedByOtherSector,
   } = useApp();
 
   const days = weekDays?.length ? weekDays : GERENCIA_DAYS;
@@ -41,7 +43,7 @@ export default function MontarEscala() {
 
   const dayInviteEntries = useMemo(() => {
     const fromStore = (invitedByDay?.[selectedGerenciaDay] || []).map((e) => (
-      typeof e === 'string' ? { code: e, time: '', status: 'pending' } : e
+      typeof e === 'string' ? { code: e, time: '', status: 'pending', sector: '' } : e
     ));
     const dayIso = currentDayObj?.iso;
     const fromInvites = (freelancerInvites || [])
@@ -57,28 +59,51 @@ export default function MontarEscala() {
         code: inv.professionalId,
         time: inv.time || '',
         status: inv.status || 'pending',
+        sector: normalizeSectorId(inv.sector) || '',
       }));
     const map = new Map();
     [...fromStore, ...fromInvites].forEach((e) => {
       if (!e.code) return;
-      const key = `${e.code}|${normalizeShiftTime(e.time || shift)}`;
+      const sec = normalizeSectorId(e.sector) || '';
+      const key = `${e.code}|${normalizeShiftTime(e.time || shift)}|${sec}`;
       const prev = map.get(key);
-      if (!prev || (e.status && e.status !== 'pending')) map.set(key, e);
+      if (!prev || (e.status && e.status !== 'pending')) map.set(key, { ...e, sector: sec });
     });
     return [...map.values()];
   }, [invitedByDay, selectedGerenciaDay, freelancerInvites, currentDayObj?.iso, shift]);
 
   const inviteOnShift = (code) => dayInviteEntries.find(
-    (e) => e.code === code && (!e.time || shiftTimesMatch(e.time, shift)),
+    (e) => e.code === code
+      && (!e.time || shiftTimesMatch(e.time, shift))
+      && (!e.sector || e.sector === selectedSector),
   );
   const inviteOtherShift = (code) => dayInviteEntries.find(
-    (e) => e.code === code && e.time && !shiftTimesMatch(e.time, shift),
+    (e) => e.code === code
+      && e.time && !shiftTimesMatch(e.time, shift)
+      && (!e.sector || e.sector === selectedSector),
   );
+  const otherSectorClaim = (code) => {
+    if (typeof claimedByOtherSector === 'function') {
+      return claimedByOtherSector(code, selectedGerenciaDay, selectedSector);
+    }
+    const hit = dayInviteEntries.find((e) => {
+      if (e.code !== code) return false;
+      if (!['pending', 'accepted', 'confirmed'].includes(e.status || 'pending')) return false;
+      const sec = normalizeSectorId(e.sector);
+      return sec && sec !== selectedSector;
+    });
+    return hit ? normalizeSectorId(hit.sector) : null;
+  };
   const isLockedOnShift = (code) => {
+    if (otherSectorClaim(code)) return true;
     const inv = inviteOnShift(code);
     return inv && ['pending', 'accepted', 'confirmed'].includes(inv.status || 'pending');
   };
   const statusLabel = (code) => {
+    const other = otherSectorClaim(code);
+    if (other) {
+      return { text: `Outro setor · ${sectorLabelFromId(other)}`, color: '#B45309' };
+    }
     const inv = inviteOnShift(code);
     if (!inv) return null;
     if (inv.status === 'accepted' || inv.status === 'confirmed') return { text: 'Aceito', color: '#16A34A' };
@@ -91,19 +116,23 @@ export default function MontarEscala() {
   const shiftScaleIds = useMemo(() => {
     const ids = new Set();
     currentDaySelectedIds.forEach((id) => {
+      const f = freelancersList.find((p) => p.id === id);
+      if (!freelaInSector(f, selectedSector)) return;
+      if (otherSectorClaim(id)) return;
       const other = inviteOtherShift(id);
       const lockedOther = other && ['pending', 'accepted', 'confirmed'].includes(other.status || 'pending');
       if (lockedOther && !inviteOnShift(id)) return;
       ids.add(id);
     });
     dayInviteEntries.forEach((e) => {
+      if (e.sector && e.sector !== selectedSector) return;
       if (!e.time || shiftTimesMatch(e.time, shift)) ids.add(e.code);
     });
     return [...ids];
-  }, [currentDaySelectedIds, dayInviteEntries, shift]);
+  }, [currentDaySelectedIds, dayInviteEntries, shift, selectedSector, freelancersList, selectedGerenciaDay]);
 
   const currentDaySelectedFreelancers = freelancersList.filter(
-    (f) => shiftScaleIds.includes(f.id) && f.sector === selectedSector,
+    (f) => shiftScaleIds.includes(f.id) && freelaInSector(f, selectedSector),
   );
   const selectedCount = currentDaySelectedFreelancers.length;
   const gap = Math.max(0, dayNeeded - selectedCount);
@@ -115,7 +144,7 @@ export default function MontarEscala() {
   const canSend = !dayIsPast && selectedCount > 0 && (!alreadySent || dayReturned || teamChanged);
 
   const filteredFreelancers = freelancersList
-    .filter((f) => f.sector === selectedSector)
+    .filter((f) => freelaInSector(f, selectedSector))
     .filter((f) => {
       if (!gerenciaSearchQuery) return true;
       const q = gerenciaSearchQuery.toLowerCase();
@@ -126,6 +155,14 @@ export default function MontarEscala() {
 
   const tryToggle = (id) => {
     if (dayIsPast) return;
+    const other = otherSectorClaim(id);
+    if (other) {
+      triggerToast(
+        `Já convocado por ${sectorLabelFromId(other)} neste dia. O setor que chama primeiro fica com a pessoa.`,
+        'err',
+      );
+      return;
+    }
     if (isLockedOnShift(id) && shiftScaleIds.includes(id)) {
       triggerToast('Já convocado neste horário. Só pode chamar em outro turno.', 'err');
       return;
@@ -135,7 +172,9 @@ export default function MontarEscala() {
 
   const handleToggleSelectAllDay = (e) => {
     if (e.target.checked) {
-      const unlocked = filteredFreelancers.map((f) => f.id);
+      const unlocked = filteredFreelancers
+        .map((f) => f.id)
+        .filter((id) => !otherSectorClaim(id) && !isLockedOnShift(id));
       const allIds = Array.from(new Set([...currentDaySelectedIds, ...unlocked]));
       setSelectedFreelancersByDay((prev) => ({ ...prev, [selectedGerenciaDay]: allIds }));
     } else {

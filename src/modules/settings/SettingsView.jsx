@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { findHotelByCode } from '../../lib/api';
 import Avatar from '../../components/Avatar';
+import { GERENCIA_SECTORS } from '../../lib/constants';
 
 const RATE_FIELDS = [
   { key: 'week', label: 'Semana' },
@@ -164,7 +165,7 @@ export default function SettingsView({
   }, [profile]);
 
   const activeTab = tabs.some((t) => t.id === tab) ? tab : tabs[0].id;
-  const sectorLabel = SECTOR_LABELS[defaultSector] || 'Restaurante';
+  const sectorLabel = SECTOR_LABELS[tech.defaultSector || defaultSector] || 'Restaurante';
   const photoInputRef = useRef(null);
   const [photoError, setPhotoError] = useState('');
   const timeoutTotal = Number(tech.timeoutMinutes) || 30;
@@ -534,6 +535,47 @@ export default function SettingsView({
                     placeholder="Ex.: Rio de Janeiro"
                   />
                 </Field>
+                <div style={{ gridColumn: '1 / -1' }}>
+                  <Field label="Setores em que atua">
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '2px' }}>
+                      {GERENCIA_SECTORS.map((sec) => {
+                        const selected = Array.isArray(account.sectors) && account.sectors.includes(sec.id);
+                        return (
+                          <button
+                            key={sec.id}
+                            type="button"
+                            onClick={() => {
+                              const cur = Array.isArray(account.sectors) ? [...account.sectors] : [];
+                              let next;
+                              if (selected) {
+                                next = cur.filter((id) => id !== sec.id);
+                                if (!next.length) next = [sec.id];
+                              } else {
+                                next = [...cur, sec.id];
+                              }
+                              onChangeAccount('sectors', next);
+                            }}
+                            style={{
+                              padding: '6px 12px',
+                              borderRadius: '4px',
+                              border: selected ? '1px solid #0066FF' : '1px solid #E2E8F0',
+                              background: selected ? '#EBF3FF' : '#FFFFFF',
+                              color: selected ? '#0066FF' : '#64748B',
+                              fontSize: '12px',
+                              fontWeight: selected ? 600 : 500,
+                              cursor: 'pointer',
+                            }}
+                          >
+                            {sec.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <span style={{ fontSize: '11px', color: '#64748B', marginTop: '6px', display: 'block' }}>
+                      Pode marcar mais de um. No mesmo dia, o setor que chamar primeiro fica com você.
+                    </span>
+                  </Field>
+                </div>
               </>
             ) : (
               <>
@@ -1287,6 +1329,32 @@ export default function SettingsView({
       {/* GERENCIA: OCUPACAO */}
       {activeTab === 'setor' && profile === 'gerencia' && (
         <>
+        <Card title="Setor padrão" hint="Abre a montagem de escala já neste setor. Você ainda pode trocar a qualquer momento.">
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+            {GERENCIA_SECTORS.map((sec) => {
+              const active = (tech.defaultSector || defaultSector) === sec.id;
+              return (
+                <button
+                  key={sec.id}
+                  type="button"
+                  onClick={() => onChangeTech('defaultSector', sec.id)}
+                  style={{
+                    padding: '8px 14px',
+                    borderRadius: '4px',
+                    border: active ? '1px solid #0066FF' : '1px solid #E2E8F0',
+                    background: active ? '#EBF3FF' : '#FFFFFF',
+                    color: active ? '#0066FF' : '#64748B',
+                    fontSize: '13px',
+                    fontWeight: active ? 600 : 500,
+                    cursor: 'pointer',
+                  }}
+                >
+                  {sec.label}
+                </button>
+              );
+            })}
+          </div>
+        </Card>
         <Card title="Meta de freelancers" hint="Mesma regra do RH: aconselha quantos profissionais montar na escala. Salve para gravar.">
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' }}>
             <Field label="1 profissional a cada (pessoas)">
