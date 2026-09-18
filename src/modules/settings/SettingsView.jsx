@@ -188,7 +188,7 @@ export default function SettingsView({
   const establishmentCode = hotel?.code || account.hotelCode || account.settings?.hotelCode || '';
   const establishmentName = hotel?.name || account.hotelOrRole || '';
   const establishmentCnpj = hotel?.cnpj || account.hotelCnpj || account.settings?.hotelCnpj || '';
-  const baseUrl = typeof window !== 'undefined' ? window.location.origin : 'https://domustaff.app';
+  const baseUrl = typeof window !== 'undefined' ? window.location.origin : 'https://domustaff.vercel.app';
   const inviteLinkFreelancer = establishmentCode
     ? `${baseUrl}/join?code=${establishmentCode}&role=freelancer`
     : '';

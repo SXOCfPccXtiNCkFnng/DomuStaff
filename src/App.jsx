@@ -12,6 +12,7 @@ import Relatorios from './modules/rh/Relatorios';
 import Aprovacao from './modules/rh/Aprovacao';
 import FreelancerDashboard from './modules/freelancer/FreelancerDashboard';
 import SettingsView from './modules/settings/SettingsView';
+import InstallAppBanner from './components/InstallAppBanner';
 import { RATE_KIND_LABEL, rateKindForDay } from './lib/constants';
 
 function Router() {
@@ -105,9 +106,10 @@ function Router() {
 }
 
 export default function App() {
-                          return (
+  return (
     <AppProvider>
       <Router />
+      <InstallAppBanner />
     </AppProvider>
   );
 }
