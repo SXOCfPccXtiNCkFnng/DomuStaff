@@ -24,6 +24,7 @@ function Router() {
     guestCountByDay, updateGuestCount, changeAccountField, techSettings, setTechSettings,
     saveSettings, savingSettings, selectedSector, hotel, triggerToast, freelancersList, managementTeam, GERENCIA_DAYS,
     linkEstablishmentByCode, unlinkEstablishmentById, requestOpenNotifPanel,
+    pushReady, pushBusy, enableMobilePush, disableMobilePush, isWebPushSupported,
   } = useApp();
 
   if (bootstrapping) {
@@ -92,6 +93,11 @@ function Router() {
           saving={savingSettings}
           onLinkEstablishment={linkEstablishmentByCode}
           onUnlinkEstablishment={unlinkEstablishmentById}
+          pushReady={pushReady}
+          pushBusy={pushBusy}
+          onEnablePush={enableMobilePush}
+          onDisablePush={disableMobilePush}
+          webPushSupported={isWebPushSupported}
         />
       )}
       {currentView === 'gerencia_montar_escala' && <MontarEscala />}

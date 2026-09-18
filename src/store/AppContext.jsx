@@ -9,6 +9,10 @@ import {
 import * as api from '../lib/api';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
 import { playNotifySound } from '../lib/notifySound';
+import {
+  enableWebPush, disableWebPush, hasActivePushSubscription, syncWebPushIfGranted,
+  isWebPushSupported,
+} from '../lib/webPush';
 
 const AppContext = createContext(null);
 const JOIN_INVITE_KEY = 'domu_join_invite';
@@ -209,6 +213,8 @@ export function AppProvider({ children }) {
   const [savingSettings, setSavingSettings] = useState(false);
   const [inboxBadge, setInboxBadge] = useState(0);
   const [notifications, setNotifications] = useState([]);
+  const [pushReady, setPushReady] = useState(false);
+  const [pushBusy, setPushBusy] = useState(false);
   const [notifPanelTick, setNotifPanelTick] = useState(0);
   const requestOpenNotifPanel = () => setNotifPanelTick((n) => n + 1);
   const accountRef = React.useRef(account);
@@ -678,9 +684,11 @@ export function AppProvider({ children }) {
 
     channel.subscribe();
 
-    if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
-      try { Notification.requestPermission(); } catch { /* ignore */ }
+    // Se já autorizou antes, re-sincroniza a subscription (não pede de novo)
+    if (account?.id) {
+      syncWebPushIfGranted(account.id).then((ok) => { if (ok) setPushReady(true); });
     }
+    hasActivePushSubscription().then((ok) => setPushReady(!!ok));
 
     const onVisible = () => {
       if (document.visibilityState !== 'visible') return;
@@ -688,12 +696,60 @@ export function AppProvider({ children }) {
     };
     document.addEventListener('visibilitychange', onVisible);
 
+    const onSwMessage = (event) => {
+      const view = event?.data?.view;
+      if (event?.data?.type === 'domu-notification-click' && view) {
+        setCurrentView(view);
+      }
+    };
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.addEventListener('message', onSwMessage);
+    }
+
     return () => {
       window.clearTimeout(debounceTimer);
       document.removeEventListener('visibilitychange', onVisible);
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.removeEventListener('message', onSwMessage);
+      }
       supabase.removeChannel(channel);
     };
   }, [account?.hotelId, account?.role, account?.id, myProfessionalUuid]);
+
+  const enableMobilePush = async () => {
+    if (!account?.id) {
+      triggerToast('Faça login para ativar notificações.', 'err');
+      return false;
+    }
+    setPushBusy(true);
+    try {
+      await enableWebPush(account.id);
+      setPushReady(true);
+      triggerToast('Notificações no celular ativadas.');
+      return true;
+    } catch (err) {
+      triggerToast(err.message || 'Não foi possível ativar as notificações.', 'err');
+      return false;
+    } finally {
+      setPushBusy(false);
+    }
+  };
+
+  const disableMobilePush = async () => {
+    if (!account?.id) return false;
+    setPushBusy(true);
+    try {
+      await disableWebPush(account.id);
+      setPushReady(false);
+      triggerToast('Notificações no celular desativadas.');
+      return true;
+    } catch (err) {
+      triggerToast(err.message || 'Não foi possível desativar.', 'err');
+      return false;
+    } finally {
+      setPushBusy(false);
+    }
+  };
 
   // Histórico: convites pendentes já existentes (sem spam de som)
   useEffect(() => {
@@ -1784,6 +1840,9 @@ export function AppProvider({ children }) {
     toast, navOpen, setNavOpen, triggerToast,
     inboxBadge, clearInboxBadge,
     notifications, pushNotification, markNotificationRead, markAllNotificationsRead,
+    pushReady, pushBusy, enableMobilePush, disableMobilePush,
+    isWebPushSupported: isWebPushSupported(),
+    pushPermission: typeof Notification !== 'undefined' ? Notification.permission : 'unsupported',
     notifPanelTick, requestOpenNotifPanel,
     selectedGerenciaDay, setSelectedGerenciaDay,
     selectedSector, setSelectedSector, rhSectorFilter, setRhSectorFilter,

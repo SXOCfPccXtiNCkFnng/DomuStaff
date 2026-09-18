@@ -156,6 +156,11 @@ export default function SettingsView({
   triggerToast,
   onLinkEstablishment,
   onUnlinkEstablishment,
+  pushReady = false,
+  pushBusy = false,
+  onEnablePush,
+  onDisablePush,
+  webPushSupported = false,
 }) {
   const tabs = tabsForProfile(profile);
   const [tab, setTab] = useState(tabs[0].id);
@@ -628,6 +633,47 @@ export default function SettingsView({
           {profile === 'freelancer' && (
             <div style={{ marginTop: '12px', fontSize: '12px', color: '#64748B' }}>
               Estabelecimentos vinculados ficam na aba <strong>Meus Estabelecimentos</strong> — começam vazios até você conectar com um código.
+            </div>
+          )}
+        </Card>
+
+        <Card
+          title="Notificações no celular"
+          hint="Aviso na tela de bloqueio mesmo com o app fechado (Web Push). No iPhone, o Domu precisa estar na Tela de Início."
+        >
+          {!webPushSupported ? (
+            <div style={{ fontSize: '13px', color: '#64748B', lineHeight: 1.45 }}>
+              Este navegador não suporta push. No iPhone use Safari → Compartilhar → Adicionar à Tela de Início e abra o ícone do app.
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div style={{ fontSize: '13px', color: '#0F172A' }}>
+                Status:{' '}
+                <strong style={{ color: pushReady ? '#16A34A' : '#B45309' }}>
+                  {pushReady ? 'Ativado neste aparelho' : 'Desativado'}
+                </strong>
+              </div>
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                {!pushReady ? (
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    disabled={pushBusy}
+                    onClick={() => onEnablePush?.()}
+                  >
+                    {pushBusy ? 'Ativando…' : 'Ativar notificações'}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="btn-outline"
+                    disabled={pushBusy}
+                    onClick={() => onDisablePush?.()}
+                  >
+                    {pushBusy ? '…' : 'Desativar neste aparelho'}
+                  </button>
+                )}
+              </div>
             </div>
           )}
         </Card>

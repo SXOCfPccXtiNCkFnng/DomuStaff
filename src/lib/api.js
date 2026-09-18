@@ -1305,6 +1305,47 @@ export async function saveDraftScale({ hotelId, sector, dayId, professionalCodes
   }
 }
 
+/**
+ * Dispara Web Push via Edge Function `send-push`.
+ * Fire-and-forget: nunca quebra o fluxo principal se a função não estiver deployada.
+ */
+export async function notifyPush({
+  profileIds,
+  hotelId,
+  roles,
+  title,
+  body,
+  view,
+  tag,
+  url = '/',
+} = {}) {
+  if (!isSupabaseConfigured) return { ok: false, reason: 'no-supabase' };
+  const hasTargets = (profileIds && profileIds.length) || (hotelId && roles?.length);
+  if (!hasTargets || !title) return { ok: false, reason: 'no-targets' };
+  try {
+    const { data, error } = await supabase.functions.invoke('send-push', {
+      body: {
+        profileIds: profileIds || [],
+        hotelId: hotelId || null,
+        roles: roles || [],
+        title,
+        body: body || '',
+        view: view || null,
+        tag: tag || null,
+        url,
+      },
+    });
+    if (error) {
+      console.warn('[push]', error.message || error);
+      return { ok: false, error: error.message };
+    }
+    return data || { ok: true };
+  } catch (err) {
+    console.warn('[push]', err?.message || err);
+    return { ok: false, error: err?.message };
+  }
+}
+
 export async function sendToRH({ hotelId, sector, dayId, guestCount, professionalCodes, uuidByCode, createdBy, shift }) {
   if (!isSupabaseConfigured) {
     const db = readDb();
@@ -1331,6 +1372,15 @@ export async function sendToRH({ hotelId, sector, dayId, guestCount, professiona
     updated_at: new Date().toISOString(),
   }).eq('hotel_id', hid).eq('sector', sector).eq('day_date', day.iso);
   if (error) throw new Error(error.message);
+  // RH recebe push mesmo com app fechado
+  void notifyPush({
+    hotelId: hid,
+    roles: ['rh'],
+    title: 'Nova escala da Gerência',
+    body: 'Há uma solicitação pronta para revisar e aprovar.',
+    view: 'main_kanban',
+    tag: `scale-req-${hid}-${day?.iso || dayId}`,
+  });
 }
 
 export async function returnRequest({ hotelId, sector, dayId, dayIso, reason, returnedBy }) {
@@ -1365,17 +1415,25 @@ export async function returnRequest({ hotelId, sector, dayId, dayIso, reason, re
   if (existing?.id) {
     const { error } = await supabase.from('shift_requests').update(payload).eq('id', existing.id);
     if (error) throw new Error(error.message);
-    return;
+  } else {
+    const { error } = await supabase.from('shift_requests').insert({
+      hotel_id: hotelId,
+      sector,
+      day_date: iso,
+      shift: SECTOR_SHIFT[sector] || null,
+      ...payload,
+    });
+    if (error) throw new Error(error.message);
   }
 
-  const { error } = await supabase.from('shift_requests').insert({
-    hotel_id: hotelId,
-    sector,
-    day_date: iso,
-    shift: SECTOR_SHIFT[sector] || null,
-    ...payload,
+  void notifyPush({
+    hotelId,
+    roles: ['gerencia'],
+    title: 'Escala devolvida pelo RH',
+    body: reason ? `Motivo: ${reason}` : 'Abra Meus pedidos para ver a observação.',
+    view: 'gerencia_pedidos',
+    tag: `return-${hotelId}-${iso}`,
   });
-  if (error) throw new Error(error.message);
 }
 
 export async function approveAndSend({ hotelId, sector, dayIdsByCode, uuidByCode, rates, hotelName, shift, weekDays }) {
@@ -1480,6 +1538,27 @@ export async function approveAndSend({ hotelId, sector, dayIdsByCode, uuidByCode
         .eq('hotel_id', hid).eq('sector', sector).eq('day_date', day.iso);
     }
   }
+
+  // Freelancers + Gerência (app fechado)
+  const freelaProfileIds = mappedPros
+    .filter((p) => dayIdsByCode[p.id]?.length && p.profileId)
+    .map((p) => p.profileId);
+  void notifyPush({
+    profileIds: freelaProfileIds,
+    title: 'Novo convite de escala',
+    body: [sectorLabel, shiftLabel].filter(Boolean).join(' · ') || 'Abra Convites para responder.',
+    view: 'freelancer_convites',
+    tag: `invite-batch-${hid}-${Date.now()}`,
+  });
+  void notifyPush({
+    hotelId: hid,
+    roles: ['gerencia'],
+    title: 'RH aprovou a escala',
+    body: 'Os convites foram enviados aos freelancers.',
+    view: 'gerencia_pedidos',
+    tag: `sent-${hid}-${Date.now()}`,
+  });
+
   return (data || []).map((row) => mapInviteRow(row, hotelName, mappedPros));
 }
 
@@ -1509,6 +1588,21 @@ export async function setInviteStatus(inviteId, status) {
         .in('status', ['sent', 'requested']);
     }
   }
+
+  if (row?.hotel_id && (status === 'accepted' || status === 'declined')) {
+    const who = [row.role, row.sector, row.time].filter(Boolean).join(' · ');
+    void notifyPush({
+      hotelId: row.hotel_id,
+      roles: ['gerencia', 'rh'],
+      title: status === 'accepted' ? 'Convite aceito' : 'Convite recusado',
+      body: who || (status === 'accepted'
+        ? 'Um profissional confirmou a escala.'
+        : 'Um profissional recusou — chame um substituto.'),
+      view: status === 'accepted' ? 'main_kanban' : 'approval_details',
+      tag: `invite-${status}-${row.id}`,
+    });
+  }
+
   return row;
 }
 
@@ -1600,3 +1694,4 @@ export async function updateProfessionalSectors({ hotelId, profileId, profession
   }
   return { sector: primary, sectors: list };
 }
+

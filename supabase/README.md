@@ -22,7 +22,13 @@ VITE_SUPABASE_ANON_KEY=eyJ...
 
 8. Rode `enable_realtime_shift_requests.sql` para avisos em tempo real (escalas + convites do freelancer), sem recarregar a página
 
-9. Reinicie `npm run dev`
+9. **Notificações no celular (Web Push)** — veja `PUSH.md`:
+   - Rode `push_subscriptions.sql`
+   - Configure secrets VAPID + faça deploy da Edge Function `send-push`
+   - Adicione `VITE_VAPID_PUBLIC_KEY` no `.env.local` (e no Vercel)
+   - No app: Configurações → Ativar notificações no celular
+
+10. Reinicie `npm run dev`
 
 Contas demo (senha `domu123`):
 
