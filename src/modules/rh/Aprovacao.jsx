@@ -7,6 +7,7 @@ import {
   GERENCIA_DAYS, GERENCIA_SECTORS, SECTOR_SHIFT, RATE_KIND_LABEL, SHIFT_OPTIONS,
   staffNeeded, formatBRL, dailyRateFor, rateKindForDay,
   staffingOptionsFromTech, shiftTimesMatch, freelaInSector, sectorLabelFromId,
+  flattenSelectionCodes, selectionEntries,
 } from '../../lib/constants';
 import Avatar from '../../components/Avatar';
 
@@ -30,7 +31,7 @@ export default function Aprovacao() {
   const weekGuestCounts = days.map((d) => Number(guestCountByDay[d.id]) || 0);
   const needed = staffNeeded(guests, staffingOptionsFromTech(techSettings, weekGuestCounts));
   const rateKind = rateKindForDay(dayObj || rhDay);
-  const dayCodes = selectedFreelancersByDay[rhDay] || [];
+  const dayCodes = flattenSelectionCodes(selectedFreelancersByDay[rhDay] || []);
 
   const sectorId = GERENCIA_SECTORS.find((s) => s.label === activeRequest?.department)?.id
     || freelancersList.find((f) => dayCodes.includes(f.id))?.sector
@@ -163,9 +164,10 @@ export default function Aprovacao() {
   const addFromOutside = (id) => {
     toggleSelectOne(id);
     setSelectedFreelancersByDay((prev) => {
-      const cur = prev[rhDay] || [];
-      if (cur.includes(id)) return prev;
-      return { ...prev, [rhDay]: [...cur, id] };
+      const cur = selectionEntries(prev[rhDay] || []);
+      if (flattenSelectionCodes(cur).includes(id)) return prev;
+      const time = shift && shift !== '—' ? shift : '';
+      return { ...prev, [rhDay]: [...cur, { code: id, time }] };
     });
     setActiveTab('selecionados');
   };

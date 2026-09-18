@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { Mail, Lock, Eye, EyeOff, ArrowRight, User, Phone, Check, ShieldCheck, AlertCircle } from 'lucide-react';
 import { useApp } from '../../store/AppContext';
-import { DEMO_ACCOUNTS } from '../../lib/constants';
 
 export default function AuthView() {
   const {
@@ -418,29 +417,6 @@ export default function AuthView() {
               </form>
             )}
           </div>
-
-          {/* Demo Logins */}
-          {isLogin && (
-            <div style={{ marginTop: '16px' }}>
-              <div style={{ fontSize: '11px', fontWeight: 500, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '8px' }}>
-                Entrar como demo
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                {DEMO_ACCOUNTS.map((acc) => (
-                  <button
-                    key={acc.email}
-                    type="button"
-                    className="btn-outline"
-                    style={{ justifyContent: 'space-between', padding: '10px 12px', fontSize: '13px' }}
-                    onClick={() => { setLoginEmail(acc.email); setLoginPassword(acc.password); signInWith(acc.email, acc.password); }}
-                  >
-                    <span style={{ fontWeight: 500, color: '#0F172A' }}>{acc.name}</span>
-                    <span style={{ color: '#64748B', fontSize: '12px' }}>{acc.role}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
       </div>
     </div>

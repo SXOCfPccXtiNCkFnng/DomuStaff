@@ -7,18 +7,19 @@ import {
 } from 'lucide-react';
 import { useApp } from '../../store/AppContext';
 import {
-  GERENCIA_DAYS, GERENCIA_SECTORS, SECTOR_SHIFT, RATE_KIND_LABEL,
+  GERENCIA_DAYS, SECTOR_SHIFT, RATE_KIND_LABEL,
   staffNeeded, formatBRL, dailyRateFor, rateKindForDay, dayMapTone,
   SHIFT_OPTIONS, staffingOptionsFromTech, shiftTimesMatch, normalizeShiftTime,
   freelaInSector, normalizeSectorId, sectorLabelFromId,
+  codesForShift, flattenSelectionCodes,
 } from '../../lib/constants';
 import Avatar from '../../components/Avatar';
 
 export default function MontarEscala() {
   const {
-    selectedGerenciaDay, setSelectedGerenciaDay, selectedSector, setSelectedSector,
+    selectedGerenciaDay, setSelectedGerenciaDay, selectedSector,
     gerenciaSearchQuery, setGerenciaSearchQuery,
-    selectedFreelancersByDay, setSelectedFreelancersByDay,
+    selectedFreelancersByDay,
     sentDays, returnedByDay, guestCountByDay, freelancersList,
     toggleGerenciaFreelancer, handleCancelGerenciaSelection, handleSendToRH,
     getShiftForDay, setShiftForDay,
@@ -40,6 +41,7 @@ export default function MontarEscala() {
   const shift = getShiftForDay?.(selectedGerenciaDay, selectedSector)
     || SECTOR_SHIFT[selectedSector]
     || '15h – 23h';
+  const sectorLabel = sectorLabelFromId(selectedSector) || 'Restaurante';
 
   const dayInviteEntries = useMemo(() => {
     const fromStore = (invitedByDay?.[selectedGerenciaDay] || []).map((e) => (
@@ -94,10 +96,11 @@ export default function MontarEscala() {
     });
     return hit ? normalizeSectorId(hit.sector) : null;
   };
+  /** Já convocado neste horário (pendente, aceito ou recusou) — trava e fica cinza. */
   const isLockedOnShift = (code) => {
     if (otherSectorClaim(code)) return true;
     const inv = inviteOnShift(code);
-    return inv && ['pending', 'accepted', 'confirmed'].includes(inv.status || 'pending');
+    return inv && ['pending', 'accepted', 'confirmed', 'declined'].includes(inv.status || 'pending');
   };
   const statusLabel = (code) => {
     const other = otherSectorClaim(code);
@@ -111,17 +114,17 @@ export default function MontarEscala() {
     return { text: 'Convocado', color: '#0066FF' };
   };
 
-  const currentDaySelectedIds = selectedFreelancersByDay[selectedGerenciaDay] || [];
-  // Escala do turno atual: selecionados livres neste horário + já convocados neste horário
+  const currentDaySelectedIds = codesForShift(
+    selectedFreelancersByDay[selectedGerenciaDay] || [],
+    shift,
+  );
+  // Escala deste turno: seleção deste horário + já convocados neste horário
   const shiftScaleIds = useMemo(() => {
     const ids = new Set();
     currentDaySelectedIds.forEach((id) => {
       const f = freelancersList.find((p) => p.id === id);
       if (!freelaInSector(f, selectedSector)) return;
       if (otherSectorClaim(id)) return;
-      const other = inviteOtherShift(id);
-      const lockedOther = other && ['pending', 'accepted', 'confirmed'].includes(other.status || 'pending');
-      if (lockedOther && !inviteOnShift(id)) return;
       ids.add(id);
     });
     dayInviteEntries.forEach((e) => {
@@ -151,7 +154,11 @@ export default function MontarEscala() {
       return f.name.toLowerCase().includes(q) || f.role.toLowerCase().includes(q) || (f.notes || '').toLowerCase().includes(q);
     });
 
-  const isAllSelected = filteredFreelancers.length > 0 && filteredFreelancers.every((f) => shiftScaleIds.includes(f.id));
+  const selectableIds = filteredFreelancers
+    .map((f) => f.id)
+    .filter((id) => !isLockedOnShift(id));
+  const isAllSelected = selectableIds.length > 0
+    && selectableIds.every((id) => shiftScaleIds.includes(id));
 
   const tryToggle = (id) => {
     if (dayIsPast) return;
@@ -163,8 +170,8 @@ export default function MontarEscala() {
       );
       return;
     }
-    if (isLockedOnShift(id) && shiftScaleIds.includes(id)) {
-      triggerToast('Já convocado neste horário. Só pode chamar em outro turno.', 'err');
+    if (isLockedOnShift(id)) {
+      triggerToast('Já chamado neste horário — não é possível convocar de novo neste turno.', 'err');
       return;
     }
     toggleGerenciaFreelancer(id);
@@ -172,17 +179,13 @@ export default function MontarEscala() {
 
   const handleToggleSelectAllDay = (e) => {
     if (e.target.checked) {
-      const unlocked = filteredFreelancers
-        .map((f) => f.id)
-        .filter((id) => !otherSectorClaim(id) && !isLockedOnShift(id));
-      const allIds = Array.from(new Set([...currentDaySelectedIds, ...unlocked]));
-      setSelectedFreelancersByDay((prev) => ({ ...prev, [selectedGerenciaDay]: allIds }));
+      selectableIds.forEach((id) => {
+        if (!shiftScaleIds.includes(id)) toggleGerenciaFreelancer(id);
+      });
     } else {
-      const unselectIds = new Set(
-        filteredFreelancers.map((f) => f.id).filter((id) => !isLockedOnShift(id)),
-      );
-      const remaining = currentDaySelectedIds.filter((id) => !unselectIds.has(id));
-      setSelectedFreelancersByDay((prev) => ({ ...prev, [selectedGerenciaDay]: remaining }));
+      currentDaySelectedIds
+        .filter((id) => !isLockedOnShift(id))
+        .forEach((id) => toggleGerenciaFreelancer(id));
     }
   };
 
@@ -195,7 +198,7 @@ export default function MontarEscala() {
     <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
       <div>
         <h1 className="page-title">Montar escala</h1>
-        <p className="page-sub">Escolha o dia e o turno — a previsão de pessoas fica em Configurações. Depois monte o time e envie ao RH.</p>
+        <p className="page-sub">Escolha o dia e o turno (o setor vem de Configurações → Demanda). Depois monte o time e envie ao RH.</p>
       </div>
 
       {dayReturned && (
@@ -248,41 +251,29 @@ export default function MontarEscala() {
           </button>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
-          {GERENCIA_SECTORS.map((sec) => {
-            const isSecActive = selectedSector === sec.id;
-            const SecIcon = sec.icon;
-            return (
-              <button
-                key={sec.id}
-                type="button"
-                onClick={() => setSelectedSector(sec.id)}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  padding: '6px 12px',
-                  borderRadius: '4px',
-                  border: isSecActive ? '1px solid #0066FF' : '1px solid transparent',
-                  background: isSecActive ? '#EBF3FF' : 'transparent',
-                  color: isSecActive ? '#0066FF' : '#64748B',
-                  fontSize: '13px',
-                  fontWeight: isSecActive ? 600 : 500,
-                  cursor: 'pointer',
-                }}
-              >
-                <SecIcon size={14} />
-                <span>{sec.label}</span>
-              </button>
-            );
-          })}
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px',
+          padding: '6px 12px',
+          background: '#EBF3FF',
+          border: '1px solid #BFDBFE',
+          borderRadius: '4px',
+          fontSize: '13px',
+          fontWeight: 600,
+          color: '#0066FF',
+        }}>
+          {sectorLabel}
+          <span style={{ fontSize: '11px', fontWeight: 500, color: '#64748B' }}>
+            · setor em Configurações
+          </span>
         </div>
       </div>
 
       <div className="week-strip" style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '8px' }}>
         {days.map((day) => {
           const isDayActive = selectedGerenciaDay === day.id;
-          const count = (selectedFreelancersByDay[day.id] || []).length;
+          const count = flattenSelectionCodes(selectedFreelancersByDay[day.id] || []).length;
           const guests = guestCountByDay[day.id] ?? 0;
           const needed = staffNeeded(guests, staffingOpts);
           const pct = Math.min(100, Math.round((count / Math.max(1, needed)) * 100));
@@ -407,7 +398,7 @@ export default function MontarEscala() {
               <span style={{ fontSize: '12px', color: '#64748B' }}>{filteredFreelancers.length}</span>
             </div>
             <span style={{ fontSize: '12px', color: '#64748B' }}>
-              {GERENCIA_SECTORS.find((s) => s.id === selectedSector)?.label} · {shift}
+              {sectorLabel} · {shift}
             </span>
           </div>
 
@@ -465,9 +456,10 @@ export default function MontarEscala() {
                                 onClick={() => tryToggle(f.id)}
                                 style={{
                                   borderBottom: '1px solid #F1F5F9',
-                                  background: isSelected ? '#F8FAFC' : 'transparent',
-                                  cursor: locked ? 'default' : 'pointer',
-                                  opacity: other && !isSelected ? 0.85 : 1,
+                                  background: locked ? '#F1F5F9' : isSelected ? '#F8FAFC' : 'transparent',
+                                  cursor: locked || dayIsPast ? 'not-allowed' : 'pointer',
+                                  opacity: locked ? 0.55 : 1,
+                                  filter: locked ? 'grayscale(0.35)' : 'none',
                                 }}
                               >
                                 <td style={{ padding: '10px 16px' }} onClick={(e) => e.stopPropagation()}>
@@ -484,13 +476,17 @@ export default function MontarEscala() {
                                     <Avatar src={f.avatar} name={f.name} size={28} />
                                     <div>
                                       <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
-                                        <span style={{ fontSize: '13px', fontWeight: 500, color: '#0F172A' }}>{f.name}</span>
+                                        <span style={{
+                                          fontSize: '13px',
+                                          fontWeight: 500,
+                                          color: locked ? '#64748B' : '#0F172A',
+                                        }}>{f.name}</span>
                                         {badge && (
                                           <span style={{ fontSize: '10px', fontWeight: 600, color: badge.color }}>{badge.text}</span>
                                         )}
                                         {!badge && other && (
                                           <span style={{ fontSize: '10px', fontWeight: 500, color: '#64748B' }}>
-                                            Já em {other.time}
+                                            Também em {other.time}
                                           </span>
                                         )}
                                       </div>
@@ -541,7 +537,7 @@ export default function MontarEscala() {
                             <button
                               type="button"
                               onClick={() => {
-                                const ids = selectedFreelancersByDay[selectedGerenciaDay] || [];
+                                const ids = flattenSelectionCodes(selectedFreelancersByDay[selectedGerenciaDay] || []);
                                 openDayPicker({
                                   id: '__team__',
                                   name: 'equipe do dia',

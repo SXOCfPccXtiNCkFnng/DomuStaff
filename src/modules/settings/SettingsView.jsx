@@ -116,6 +116,7 @@ function tabsForProfile(profile) {
       { id: 'operacao', label: 'Operação' },
       { id: 'diarias', label: 'Diárias' },
       { id: 'convocacao', label: 'Convocação' },
+      { id: 'alertas', label: 'Alertas' },
     ];
   }
   if (profile === 'gerencia') {
@@ -634,47 +635,6 @@ export default function SettingsView({
           {profile === 'freelancer' && (
             <div style={{ marginTop: '12px', fontSize: '12px', color: '#64748B' }}>
               Estabelecimentos vinculados ficam na aba <strong>Meus Estabelecimentos</strong> — começam vazios até você conectar com um código.
-            </div>
-          )}
-        </Card>
-
-        <Card
-          title="Notificações no celular"
-          hint="Aviso na tela de bloqueio mesmo com o app fechado (Web Push). No iPhone, o Domu precisa estar na Tela de Início."
-        >
-          {!webPushSupported ? (
-            <div style={{ fontSize: '13px', color: '#64748B', lineHeight: 1.45 }}>
-              Este navegador não suporta push. No iPhone use Safari → Compartilhar → Adicionar à Tela de Início e abra o ícone do app.
-            </div>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <div style={{ fontSize: '13px', color: '#0F172A' }}>
-                Status:{' '}
-                <strong style={{ color: pushReady ? '#16A34A' : '#B45309' }}>
-                  {pushReady ? 'Ativado neste aparelho' : 'Desativado'}
-                </strong>
-              </div>
-              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                {!pushReady ? (
-                  <button
-                    type="button"
-                    className="btn-primary"
-                    disabled={pushBusy}
-                    onClick={() => onEnablePush?.()}
-                  >
-                    {pushBusy ? 'Ativando…' : 'Ativar notificações'}
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    className="btn-outline"
-                    disabled={pushBusy}
-                    onClick={() => onDisablePush?.()}
-                  >
-                    {pushBusy ? '…' : 'Desativar neste aparelho'}
-                  </button>
-                )}
-              </div>
             </div>
           )}
         </Card>
@@ -1464,8 +1424,50 @@ export default function SettingsView({
         </>
       )}
 
-      {/* GERENCIA: ALERTAS */}
-      {activeTab === 'alertas' && profile === 'gerencia' && (
+      {/* GERENCIA / RH: ALERTAS */}
+      {activeTab === 'alertas' && (profile === 'gerencia' || profile === 'rh') && (
+        <>
+        <Card
+          title="Notificações no celular"
+          hint="Aviso na tela de bloqueio mesmo com o app fechado (Web Push). No iPhone, o Domu precisa estar na Tela de Início."
+        >
+          {!webPushSupported ? (
+            <div style={{ fontSize: '13px', color: '#64748B', lineHeight: 1.45 }}>
+              Este navegador não suporta push. No iPhone use Safari → Compartilhar → Adicionar à Tela de Início e abra o ícone do app.
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div style={{ fontSize: '13px', color: '#0F172A' }}>
+                Status:{' '}
+                <strong style={{ color: pushReady ? '#16A34A' : '#B45309' }}>
+                  {pushReady ? 'Ativado neste aparelho' : 'Desativado'}
+                </strong>
+              </div>
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                {!pushReady ? (
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    disabled={pushBusy}
+                    onClick={() => onEnablePush?.()}
+                  >
+                    {pushBusy ? 'Ativando…' : 'Ativar notificações'}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="btn-outline"
+                    disabled={pushBusy}
+                    onClick={() => onDisablePush?.()}
+                  >
+                    {pushBusy ? '…' : 'Desativar neste aparelho'}
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+        </Card>
+        {profile === 'gerencia' && (
         <Card title="Alertas operacionais" hint="Avisos no painel da gerência durante o turno.">
           <ToggleRow
             title="Alerta de pico de atendimento"
@@ -1480,10 +1482,53 @@ export default function SettingsView({
             onChange={(v) => onChangeTech('alertConfirmations', v)}
           />
         </Card>
+        )}
+        </>
       )}
 
       {/* FREELANCER: AVISOS */}
       {activeTab === 'avisos' && profile === 'freelancer' && (
+        <>
+        <Card
+          title="Notificações no celular"
+          hint="Aviso na tela de bloqueio mesmo com o app fechado (Web Push). No iPhone, o Domu precisa estar na Tela de Início."
+        >
+          {!webPushSupported ? (
+            <div style={{ fontSize: '13px', color: '#64748B', lineHeight: 1.45 }}>
+              Este navegador não suporta push. No iPhone use Safari → Compartilhar → Adicionar à Tela de Início e abra o ícone do app.
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div style={{ fontSize: '13px', color: '#0F172A' }}>
+                Status:{' '}
+                <strong style={{ color: pushReady ? '#16A34A' : '#B45309' }}>
+                  {pushReady ? 'Ativado neste aparelho' : 'Desativado'}
+                </strong>
+              </div>
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                {!pushReady ? (
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    disabled={pushBusy}
+                    onClick={() => onEnablePush?.()}
+                  >
+                    {pushBusy ? 'Ativando…' : 'Ativar notificações'}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="btn-outline"
+                    disabled={pushBusy}
+                    onClick={() => onDisablePush?.()}
+                  >
+                    {pushBusy ? '…' : 'Desativar neste aparelho'}
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+        </Card>
         <Card title="Canais de aviso" hint="Como você quer receber chamados de plantão.">
           <ToggleRow
             title="Notificação no WhatsApp"
@@ -1498,6 +1543,7 @@ export default function SettingsView({
             onChange={(v) => onChangeTech('notifyOpenSlots', v)}
           />
         </Card>
+        </>
       )}
 
       {onSave && (

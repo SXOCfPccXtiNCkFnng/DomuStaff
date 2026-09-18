@@ -206,6 +206,24 @@ export function freelaInSector(f, sectorId) {
   return freelancerSectors(f).includes(sid);
 }
 
+/** Seleção da escala: string (legado) ou { code, time }. */
+export function selectionEntries(list) {
+  return (list || [])
+    .map((e) => (typeof e === 'string' ? { code: e, time: '' } : { code: e?.code, time: e?.time || '' }))
+    .filter((e) => e.code);
+}
+
+export function flattenSelectionCodes(list) {
+  return [...new Set(selectionEntries(list).map((e) => e.code))];
+}
+
+/** Códigos selecionados para um turno (entradas sem time valem para qualquer turno — legado). */
+export function codesForShift(list, shiftTime) {
+  return selectionEntries(list)
+    .filter((e) => !shiftTime || !e.time || shiftTimesMatch(e.time, shiftTime))
+    .map((e) => e.code);
+}
+
 export const DAILY_RATES = [
   { role: 'Garçom', week: 180, weekend: 220, holiday: 270 },
   { role: 'Bartender', week: 200, weekend: 250, holiday: 300 },

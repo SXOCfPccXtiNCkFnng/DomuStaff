@@ -5,6 +5,7 @@ import {
   GERENCIA_SECTORS,
   staffNeeded,
   staffingOptionsFromTech,
+  flattenSelectionCodes,
 } from '../../lib/constants';
 
 function statusMeta({ sent, returned, requestStatus, declinedCount, acceptedCount }) {
@@ -82,7 +83,7 @@ export default function Pedidos() {
     const staffingOpts = staffingOptionsFromTech(techSettings, weekGuestCounts);
     return days
       .map((day) => {
-        const codes = selectedFreelancersByDay[day.id] || [];
+        const codes = flattenSelectionCodes(selectedFreelancersByDay[day.id] || []);
         const invites = (invitedByDay[day.id] || []).map((e) => (
           typeof e === 'string' ? { code: e, status: 'pending' } : e
         ));

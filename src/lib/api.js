@@ -1655,15 +1655,17 @@ export async function uploadPhoto(accountId, dataUrl) {
 
 /** Atualiza setores em que o freelancer pode atuar (primeiro = principal). */
 export async function updateProfessionalSectors({ hotelId, profileId, professionalCode, sectors }) {
-  const list = [...new Set((sectors || []).map((s) => String(s).trim()).filter(Boolean))];
+  const list = [...new Set(
+    (sectors || []).map((s) => normalizeSectorId(s) || String(s).trim().toLowerCase()).filter(Boolean),
+  )];
   if (!list.length) throw new Error('Selecione ao menos um setor.');
   const primary = list[0];
 
   if (!isSupabaseConfigured) {
     const db = readDb();
     db.professionals = (db.professionals || []).map((p) => {
-      const match = (professionalCode && p.id === professionalCode)
-        || (profileId && p.profile_id === profileId && (!hotelId || p.hotel_id === hotelId));
+      const match = (profileId && p.profile_id === profileId && (!hotelId || p.hotel_id === hotelId))
+        || (professionalCode && p.id === professionalCode);
       if (!match) return p;
       return { ...p, sector: primary, sectors: list };
     });
@@ -1671,26 +1673,37 @@ export async function updateProfessionalSectors({ hotelId, profileId, profession
     return { sector: primary, sectors: list };
   }
 
-  let q = supabase.from('professionals').update({
+  if (!profileId && !professionalCode) {
+    throw new Error('Perfil do profissional não identificado.');
+  }
+
+  const payload = {
     sector: primary,
     sectors: list,
     updated_at: new Date().toISOString(),
-  });
-  if (professionalCode) q = q.eq('code', professionalCode);
-  if (hotelId) q = q.eq('hotel_id', hotelId);
+  };
+
+  let q = supabase.from('professionals').update(payload);
   if (profileId) q = q.eq('profile_id', profileId);
-  const { error } = await q;
-  if (error) {
-    // Coluna sectors pode ainda não existir — tenta só sector
-    if (/sectors|column/i.test(error.message || '')) {
-      const { error: e2 } = await supabase.from('professionals').update({
-        sector: primary,
-        updated_at: new Date().toISOString(),
-      }).eq('profile_id', profileId).eq('hotel_id', hotelId || HOTEL_ID);
-      if (e2) throw new Error(e2.message);
-      return { sector: primary, sectors: list };
-    }
-    throw new Error(error.message);
+  else q = q.eq('code', professionalCode);
+  if (hotelId) q = q.eq('hotel_id', hotelId);
+
+  let { data, error } = await q.select('id, sector, sectors');
+  if (error && /sectors|column/i.test(error.message || '')) {
+    let q2 = supabase.from('professionals').update({
+      sector: primary,
+      updated_at: new Date().toISOString(),
+    });
+    if (profileId) q2 = q2.eq('profile_id', profileId);
+    else q2 = q2.eq('code', professionalCode);
+    if (hotelId) q2 = q2.eq('hotel_id', hotelId);
+    const res2 = await q2.select('id, sector');
+    error = res2.error;
+    data = res2.data;
+  }
+  if (error) throw new Error(error.message);
+  if (!data?.length) {
+    throw new Error('Não foi possível salvar o setor. Confirme o vínculo com o estabelecimento e rode professionals_sectors.sql se ainda não rodou.');
   }
   return { sector: primary, sectors: list };
 }

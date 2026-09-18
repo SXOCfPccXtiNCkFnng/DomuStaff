@@ -6,7 +6,7 @@ import { useApp } from '../../store/AppContext';
 import {
   GERENCIA_DAYS, GERENCIA_SECTORS, RATE_KIND_LABEL,
   formatBRL, dailyRateFor, rateKindForDay, staffNeeded, dayMapTone,
-  staffingOptionsFromTech,
+  staffingOptionsFromTech, flattenSelectionCodes,
 } from '../../lib/constants';
 
 function inviteCoversDay(inv, day) {
@@ -79,7 +79,7 @@ export default function Kanban() {
     };
 
     // Escala montada (ainda sem convite ou com gente na lista)
-    (selectedFreelancersByDay[rhDay] || []).forEach((code) => {
+    (flattenSelectionCodes(selectedFreelancersByDay[rhDay] || [])).forEach((code) => {
       const f = freelancersList.find((p) => p.id === code);
       if (!f) return;
       const card = ensure(f.sector || 'restaurante', { role: f.role });
@@ -218,7 +218,7 @@ export default function Kanban() {
   let weekendCost = 0;
   days.forEach((day) => {
     const kind = rateKindForDay(day);
-    const codes = new Set(selectedFreelancersByDay[day.id] || []);
+    const codes = new Set(flattenSelectionCodes(selectedFreelancersByDay[day.id] || []));
     (invitedByDay?.[day.id] || []).forEach((e) => {
       const code = typeof e === 'string' ? e : e.code;
       if (code) codes.add(code);
@@ -233,7 +233,7 @@ export default function Kanban() {
   });
 
   const scaleCountForDay = (dayId) => {
-    const fromScale = selectedFreelancersByDay[dayId] || [];
+    const fromScale = flattenSelectionCodes(selectedFreelancersByDay[dayId] || []);
     const fromInvites = invitedByDay?.[dayId] || [];
     const set = new Set([
       ...fromScale,

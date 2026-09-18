@@ -5,7 +5,7 @@ import {
 import { useApp } from '../../store/AppContext';
 import {
   GERENCIA_DAYS, GERENCIA_SECTORS,
-  formatBRL, dailyRateFor,
+  formatBRL, dailyRateFor, flattenSelectionCodes, freelaInSector,
 } from '../../lib/constants';
 
 export default function Relatorios() {
@@ -27,9 +27,9 @@ export default function Relatorios() {
     let people = 0;
     let role = '—';
     days.forEach((day) => {
-      (selectedFreelancersByDay[day.id] || []).forEach((code) => {
+      flattenSelectionCodes(selectedFreelancersByDay[day.id] || []).forEach((code) => {
         const f = freelancersList.find((p) => p.id === code);
-        if (f && f.sector === sector.id) {
+        if (f && freelaInSector(f, sector.id)) {
           people += 1;
           role = f.role;
         }
@@ -60,7 +60,10 @@ export default function Relatorios() {
   ];
   const acceptRate = sent > 0 ? Math.round((accepted / sent) * 100) : 0;
   const present = checkedInIds.length;
-  const expected = Math.max(present, Object.values(selectedFreelancersByDay || {}).flat().length);
+  const expected = Math.max(
+    present,
+    Object.values(selectedFreelancersByDay || {}).reduce((n, list) => n + flattenSelectionCodes(list).length, 0),
+  );
   const noShow = Math.max(0, expected - present);
   const presenceRate = expected > 0 ? Math.round((present / expected) * 100) : (present > 0 ? 100 : 0);
 
