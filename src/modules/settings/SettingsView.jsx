@@ -454,6 +454,7 @@ export default function SettingsView({
 
       {/* PERFIL */}
       {activeTab === 'perfil' && (
+        <>
         <Card
           title="Dados da conta"
           hint={
@@ -677,6 +678,7 @@ export default function SettingsView({
             </div>
           )}
         </Card>
+        </>
       )}
 
       {/* RH: CODIGO E CONVITES */}
