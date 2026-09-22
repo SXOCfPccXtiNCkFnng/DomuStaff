@@ -18,8 +18,8 @@ npx web-push generate-vapid-keys --json
 No Dashboard: **Project Settings → Edge Functions → Secrets**, ou CLI:
 
 ```bash
-supabase secrets set VAPID_PUBLIC_KEY="BP-tBLwruzz8X2ewLsQKt32XgcGkdQ5FwMyAT6IUwqcR1RLqPIrGAM3eC-Ctm8qv8_wBX2g_dNeLQ1VIOqvXMw8"
-supabase secrets set VAPID_PRIVATE_KEY="b7GCcGMLg14qDjmj1ABTfY80TfjiwEIbEN1RjwXU18c"
+supabase secrets set VAPID_PUBLIC_KEY="SUA_CHAVE_PRIVADA_AQUI"
+supabase secrets set VAPID_PRIVATE_KEY="SUA_CHAVE_PRIVADA_AQUI"
 ```
 
 ## 4. Deploy da função
